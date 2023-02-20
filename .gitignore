@@ -128,4 +128,5 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-*.parquet
+# Specific Parquet files to ignore
+spx_stock_prices_master.parquet
