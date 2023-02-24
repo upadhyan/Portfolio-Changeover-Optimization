@@ -130,3 +130,4 @@ dmypy.json
 
 # Specific Parquet files to ignore
 spx_stock_prices_master.parquet
+.idea/
