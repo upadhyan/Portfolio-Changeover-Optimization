@@ -6,6 +6,7 @@ from darts.models import ExponentialSmoothing, NBEATSModel, NLinearModel, RNNMod
 from darts.metrics import mape, r2_score, mase, smape, mse
 import matplotlib.pyplot as plt
 import seaborn as sns
+import pickle
 
 import torch
 
@@ -14,7 +15,7 @@ torch.set_float32_matmul_precision('medium')
 import time
 import random
 
-from tqdm.notebook import trange
+from tqdm import trange
 
 import os
 import contextlib
@@ -96,6 +97,7 @@ class Experiment:
             if (temp_final > self.initial_portfolio).any():
                 add = np.zeros(self.num_stocks)
         self.final_portfolio_value = self.final_portfolio @ self.initial_prices
+
     def generate_experiment(self, stock_prices):
         random_date = self.choose_split_date()
         # get the date two years before random date
@@ -105,9 +107,6 @@ class Experiment:
         # convert random date to a string
         start_date = start_date.strftime('%Y-%m-%d')
         end_date = end_date.strftime('%Y-%m-%d')
-        # Subset the data
-        print(f"Start Date: {start_date}")
-        print(f"End Date: {end_date}")
         subset = stock_prices.loc[start_date:end_date]
         # Replace all zeros with nan
         subset = subset.replace(0, np.nan)
@@ -175,20 +174,34 @@ class Experiment:
         return random_date
 
 
-# write a if name == main statement
+def generate_experiments(file_path, num_experiments, output_dir):
+    prices = pd.read_parquet(file_path)
+    for i in trange(num_experiments):
+        experiment = Experiment(prices)
+        # check if the output directory exists, if not, create it
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        f_name = f'exp_{experiment.num_stocks}_{experiment.budget}_{int(experiment.initial_portfolio_value)}_{int(experiment.final_portfolio_value)}.pkl'
+
+        # save the experiment to a pickle file in output_dir
+        with open(os.path.join(output_dir, f_name), 'wb') as f:
+            pickle.dump(experiment, f)
+
+
 if __name__ == '__main__':
-    # read in stock_data.parquet
-    stock_prices = pd.read_parquet('spx_stock_prices.parquet')
-    print(stock_prices)
-    stock_prices.index = pd.to_datetime(stock_prices.index)
-    # create a new experiment
-    experiment = Experiment(stock_prices)
-    print(experiment.average_error)
-    truth = experiment.truth
-    first_predict = experiment.forecasts[0]
-    stock_one = experiment.stocks[0]
-    fig,ax = plt.subplots(nrows=1, ncols=1, figsize=(10, 5))
-    ax.plot(truth[stock_one], label='truth')
-    ax.plot(first_predict[stock_one], label='prediction')
-    ax.legend()
-    plt.show()
+    generate_experiments('spx_stock_prices.parquet', 5, 'experiments')
+    # # read in stock_data.parquet
+    # stock_prices = pd.read_parquet('spx_stock_prices.parquet')
+    # print(stock_prices)
+    # stock_prices.index = pd.to_datetime(stock_prices.index)
+    # # create a new experiment
+    # experiment = Experiment(stock_prices)
+    # print(experiment.average_error)
+    # truth = experiment.truth
+    # first_predict = experiment.forecasts[0]
+    # stock_one = experiment.stocks[0]
+    # fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(10, 5))
+    # ax.plot(truth[stock_one], label='truth')
+    # ax.plot(first_predict[stock_one], label='prediction')
+    # ax.legend()
+    # plt.show()
