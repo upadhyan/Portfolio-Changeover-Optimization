@@ -2,8 +2,8 @@ import pandas as pd
 import numpy as np
 
 from darts import TimeSeries
-from darts.models import ExponentialSmoothing, NBEATSModel, NLinearModel, RNNModel, TCNModel, TransformerModel
-from darts.metrics import mape, r2_score, mase, smape, mse
+from darts.models import NBEATSModel, TFTModel, NLinearModel, DLinearModel, NHiTSModel
+from darts.metrics import mape
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pickle
@@ -12,13 +12,11 @@ import torch
 
 torch.set_float32_matmul_precision('medium')
 
-import time
 import random
 
 from tqdm import trange
 
 import os
-import contextlib
 
 import logging
 
@@ -27,7 +25,7 @@ logging.getLogger("pytorch_lightning.accelerators.cuda").setLevel(logging.WARNIN
 
 
 class Experiment:
-    def __init__(self, stock_prices: pd.DataFrame):
+    def __init__(self, stock_prices: pd.DataFrame, covariates: pd.DataFrame):
         self.num_stocks = None
         self.stocks = None
         self.pct_variance = None
@@ -44,7 +42,9 @@ class Experiment:
         self.target_stock = None
         self.initial_portfolio_value = None
         self.final_portfolio_value = None
-        self.generate_experiment(stock_prices)
+        stocks = [x for x in stock_prices if x not in covariates]
+        self.generate_experiment(stock_prices, covariates)
+
 
     # Make a function that accepts a list as an input
     def set_stocks(self, stocks: list):
@@ -98,15 +98,18 @@ class Experiment:
                 add = np.zeros(self.num_stocks)
         self.final_portfolio_value = self.final_portfolio @ self.initial_prices
 
-    def generate_experiment(self, stock_prices):
+    def generate_experiment(self, stock_prices: pd.DataFrame, covariates: pd.DataFrame):
         random_date = self.choose_split_date()
         # get the date two years before random date
-        start_date = random_date - pd.DateOffset(years=3)
+        start_date = random_date - pd.DateOffset(years=4)
+        cov_start_date = random_date - pd.DateOffset(years=5)
         # get the date 30 business days after random date
         end_date = random_date + pd.DateOffset(days=30)
+        cov_end_date = random_date + pd.DateOffset(days=90)
         # convert random date to a string
         start_date = start_date.strftime('%Y-%m-%d')
         end_date = end_date.strftime('%Y-%m-%d')
+        cov_end_date = cov_end_date.strftime('%Y-%m-%d')
         subset = stock_prices.loc[start_date:end_date]
         # Replace all zeros with nan
         subset = subset.replace(0, np.nan)
@@ -119,9 +122,10 @@ class Experiment:
 
         # subset the data to only the stocks we chose
         subset = subset[stocks]
-
+        full_idx = pd.date_range(start_date, end_date, freq='B')
+        new_index = pd.date_range(cov_start_date, cov_end_date, freq='B')
         # reindex the subset with business days and set the index name to 'date'
-        subset = subset.reindex(pd.date_range(start_date, end_date, freq='B'), method='ffill')
+        subset = subset.reindex(full_idx, method='ffill')
         subset.index.name = 'date'
 
         split_date = subset.index[-31]
@@ -131,28 +135,58 @@ class Experiment:
         subset = subset.reset_index()
 
         ts = TimeSeries.from_dataframe(subset, time_col='date', value_cols=stocks)
-
         train, val = ts.split_after(split_date)
         self.set_truth(val.pd_dataframe())
         self.set_initial_prices(train.pd_dataframe().iloc[-1])
         self.create_initial_portfolio()
-        self.create_forecasts(ts, subset, train, val)
 
-    def create_forecasts(self, time_series, subset, train, val):
-        model = NLinearModel(
-            input_chunk_length=120,
+        covariates = covariates.reindex(new_index, method='ffill')
+
+        covariates.index.name = 'date'
+        if covariates.isna().sum().sum() > 0:
+            covariates = covariates.fillna(method='bfill')
+        covariates = covariates.dropna(axis=1, how='any')
+        cov_names = covariates.columns.tolist()
+        covariates = covariates.reset_index()
+        cov_ts = TimeSeries.from_dataframe(covariates, time_col='date', value_cols=cov_names)
+        cov_train, cov_val = cov_ts.split_after(split_date)
+        self.create_forecasts(ts, subset, train, val,
+                               cov_ts, covariates, cov_train, cov_val)
+
+    def create_forecasts(self,
+                         time_series, subset, train, val,
+                         cov_ts, cov_df, cov_train, cov_val):
+        # model = NLinearModel(
+        #     input_chunk_length=120,
+        #     output_chunk_length=30,
+        #     n_epochs=100,
+        #     random_state=42
+        # )
+
+        # model = TFTModel(
+        #     input_chunk_length=128,
+        #     output_chunk_length=30,
+        #     n_epochs=100,
+        #     random_state=42,
+        #     add_relative_index=True
+        # )
+        model = NHiTSModel(
+            input_chunk_length=128,
             output_chunk_length=30,
             n_epochs=100,
-            random_state=42
+            random_state=42,
+            layer_widths=128,
+            num_layers=4,
+            num_blocks=3,
         )
-        model.fit(train, verbose=False)
+        model.fit(train, verbose=False, past_covariates=cov_ts)
         predictions = [None] * len(val)
         errors = []
         for i in range(len(val)):
             updated_split = subset.index[-31 + i]
             updated_train, updated_val = time_series.split_after(updated_split)
             forward_steps = len(val) - i
-            pred = model.predict(forward_steps, series=updated_train, verbose=False)
+            pred = model.predict(forward_steps, series=updated_train, verbose=False, past_covariates=cov_ts)
             if i == 0:
                 predictions[i] = pred.pd_dataframe()
             else:
@@ -167,17 +201,18 @@ class Experiment:
 
     @staticmethod
     def choose_split_date():
-        minimum_date = pd.Timestamp('2002-01-01')
+        minimum_date = pd.Timestamp('2004-01-01')
         maximum_date = pd.Timestamp('2021-12-31')
         random_date = pd.Timestamp(random.randint(minimum_date.value, maximum_date.value))
         random_date = random_date.date()
         return random_date
 
 
-def generate_experiments(file_path, num_experiments, output_dir):
-    prices = pd.read_parquet(file_path)
-    for i in trange(num_experiments):
-        experiment = Experiment(prices)
+def generate_experiments(prices, covariates, num_experiments, output_dir):
+    pbar = trange(num_experiments)
+    average_errors = []
+    for i in pbar:
+        experiment = Experiment(prices, covariates)
         # check if the output directory exists, if not, create it
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -186,22 +221,15 @@ def generate_experiments(file_path, num_experiments, output_dir):
         # save the experiment to a pickle file in output_dir
         with open(os.path.join(output_dir, f_name), 'wb') as f:
             pickle.dump(experiment, f)
-
-
+        average_errors.append(experiment.average_error)
+        pbar.set_description(f"Experiment {i} saved to {f_name}. Error is {experiment.average_error}")
+    print(f"Average error is {np.mean(average_errors)}")
 if __name__ == '__main__':
-    generate_experiments('spx_stock_prices.parquet', 5, 'experiments')
-    # # read in stock_data.parquet
-    # stock_prices = pd.read_parquet('spx_stock_prices.parquet')
-    # print(stock_prices)
-    # stock_prices.index = pd.to_datetime(stock_prices.index)
-    # # create a new experiment
-    # experiment = Experiment(stock_prices)
-    # print(experiment.average_error)
-    # truth = experiment.truth
-    # first_predict = experiment.forecasts[0]
-    # stock_one = experiment.stocks[0]
-    # fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(10, 5))
-    # ax.plot(truth[stock_one], label='truth')
-    # ax.plot(first_predict[stock_one], label='prediction')
-    # ax.legend()
-    # plt.show()
+    prices = pd.read_parquet('raw_data/spx_stock_prices.parquet')
+    treasury_rate_files = ['daily-treasury-rates.csv'] + [f"daily-treasury-rates ({i}).csv" for i in range(1,25)]
+    rates_df = [pd.read_csv(f"raw_data/{file}", index_col=0) for file in treasury_rate_files]
+    rates_df = pd.concat(rates_df)
+    rates_df.index = pd.to_datetime(rates_df.index)
+    # sort rates_df by date
+    rates_df = rates_df.sort_index()
+    generate_experiments(prices, rates_df, 10, 'experiments')
