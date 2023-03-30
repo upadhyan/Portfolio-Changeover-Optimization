@@ -164,9 +164,11 @@ class MarketSimulator:
         self.policy = policy
 
     def run(self, starting_portfolio):
+        self.hist_trades = []
         portfolio = starting_portfolio
         for t in self.trading_times:
             trades = self.policy.get_trades(portfolio, t)
+            self.hist_trades.append(trades)
             portfolio = self._apply_trades(portfolio, trades)
         return portfolio
 
