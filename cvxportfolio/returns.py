@@ -16,11 +16,12 @@ limitations under the License.
 
 
 import cvxpy as cvx
+import numpy as np
+import pandas as pd
 from cvxportfolio.expression import Expression
 from .utils import values_in_time, null_checker
 
-__all__ = ['ReturnsForecast', 'MPOReturnsForecast',
-           'MultipleReturnsForecasts']
+__all__ = ["ReturnsForecast", "MPOReturnsForecast", "MultipleReturnsForecasts", "OnlineReturnsForecasts"]
 
 
 class BaseReturnsModel(Expression):
@@ -36,7 +37,7 @@ class ReturnsForecast(BaseReturnsModel):
       half_life: Number of days for alpha auto-correlation to halve.
     """
 
-    def __init__(self, returns, delta=0., gamma_decay=None, name=None):
+    def __init__(self, returns, delta=0.0, gamma_decay=None, name=None):
         null_checker(returns)
         self.returns = returns
         null_checker(delta)
@@ -55,10 +56,8 @@ class ReturnsForecast(BaseReturnsModel):
         Returns:
           An expression for the alpha.
         """
-        alpha = cvx.multiply(
-            values_in_time(self.returns, t), wplus)
-        alpha -= cvx.multiply(
-            values_in_time(self.delta, t), cvx.abs(wplus))
+        alpha = cvx.multiply(values_in_time(self.returns, t), wplus)
+        alpha -= cvx.multiply(values_in_time(self.delta, t), cvx.abs(wplus))
         return cvx.sum(alpha)
 
     def weight_expr_ahead(self, t, tau, wplus):
@@ -75,7 +74,7 @@ class ReturnsForecast(BaseReturnsModel):
 
         alpha = self.weight_expr(t, wplus)
         if tau > t and self.gamma_decay is not None:
-            alpha *= (tau - t).days**(-self.gamma_decay)
+            alpha *= (tau - t).days ** (-self.gamma_decay)
         return alpha
 
 
@@ -144,6 +143,48 @@ class MultipleReturnsForecasts(BaseReturnsModel):
         """
         alpha = 0
         for idx, source in enumerate(self.alpha_sources):
-            alpha += source.weight_expr_ahead(t,
-                                              tau, wplus) * self.weights[idx]
+            alpha += source.weight_expr_ahead(t, tau, wplus) * self.weights[idx]
         return alpha
+
+
+class OnlineReturnsForecasts(BaseReturnsModel):
+    def __init__(self, prices, trading_period=30, samples=None):
+        self.prices = prices
+        self.ret = prices.pct_change().iloc[1:]
+        self.trading_period = trading_period
+        self.r_hat = None
+        super().__init__()
+
+    def weight_expr(self, t, wplus, z=None, v=None):
+        return self.ret[t] @ wplus
+
+    def weight_expr_ahead(self, t, tau, wplus, assets=None):
+        """Returns the estimate at time t of alpha at time tau.
+
+        Args:
+          t: time estimate is made.
+          wplus: An expression for holdings.
+          tau: time of alpha being estimated.
+
+        Returns:
+          An expression for the alpha.
+        """
+        if t == tau:
+            self._update(t, assets)
+        # return self.r_hat.loc[tau].values.T @ wplus
+        return self.p_hat.loc[tau].values.T @ wplus
+
+    def _update(self, t, assets=None):
+        rng = np.random.default_rng()
+        # samples = 1000
+        if assets is not None:
+            ret = self.ret[assets]
+        else:
+            ret = self.ret
+        mean = ret.loc[:t].mean()
+        cov = ret.loc[:t].cov()
+        trade_dates = ret.loc[t:].iloc[: self.trading_period].index
+        # r_hat = rng.multivariate_normal(mean = mean, cov = cov, size = (samples, 30)).mean(axis=0)
+        r_hat = rng.multivariate_normal(mean=mean, cov=cov, size=30)
+        self.r_hat = pd.DataFrame(data=r_hat, columns=ret.columns, index=trade_dates)
+        self.p_hat = (self.r_hat + 1).cumprod().multiply(self.prices[assets].loc[t])
