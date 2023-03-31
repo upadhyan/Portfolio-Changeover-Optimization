@@ -74,7 +74,7 @@ class CustomMultiPeriodOpt:
     def get_trades(self, portfolio, t=dt.datetime.today()):
         ### GUROBI SETTINGS ###
         env = gp.Env(empty=True)
-        env.setParam("OutputFlag", True)
+        env.setParam("OutputFlag", False)
         # env.setParam("TimeLimit",time_limit)
         env.start()
         #######################
@@ -151,9 +151,12 @@ class CustomMultiPeriodOpt:
             self.p_vals = [p.getValue() for p in p_arr]
             self.cash_vals = [cash.getValue() for cash in cash_arr]
             self.z_vals = [z.getValue() for z in z_arr]
+            print(f"Z:{self.z_vals[0]}")
+            print(f"P:{self.p_vals[0]}")
         except Exception as e:
             print(e)
 
+        assert (self.p_vals[0] >= 0).all()
         return pd.Series(index=portfolio.index, data=(np.append(self.z_vals[0], self.cash_vals[0])))
 
 
@@ -165,7 +168,8 @@ class MarketSimulator:
 
     def run(self, starting_portfolio):
         self.hist_trades = []
-        portfolio = starting_portfolio
+        portfolio = starting_portfolio.copy()
+        print(f"SP: {portfolio.to_numpy()}")
         for t in self.trading_times:
             trades = self.policy.get_trades(portfolio, t)
             self.hist_trades.append(trades)
