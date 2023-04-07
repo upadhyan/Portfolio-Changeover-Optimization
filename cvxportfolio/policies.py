@@ -27,13 +27,21 @@ from cvxportfolio.constraints import BaseConstraint
 from cvxportfolio.utils import values_in_time, null_checker
 
 
-__all__ = ['Hold', 'FixedTrade', 'PeriodicRebalance', 'AdaptiveRebalance',
-           'SinglePeriodOpt', 'MultiPeriodOpt', 'ProportionalTrade',
-           'RankAndLongShort']
+__all__ = [
+    "Hold",
+    "FixedTrade",
+    "PeriodicRebalance",
+    "AdaptiveRebalance",
+    "SinglePeriodOpt",
+    "MultiPeriodOpt",
+    "ProportionalTrade",
+    "RankAndLongShort",
+    "CustomMultiPeriodOpt",
+]
 
 
 class BasePolicy(object, metaclass=ABCMeta):
-    """ Base class for a trading policy. """
+    """Base class for a trading policy."""
 
     def __init__(self):
         self.costs = []
@@ -41,22 +49,19 @@ class BasePolicy(object, metaclass=ABCMeta):
 
     @abstractmethod
     def get_trades(self, portfolio, t=dt.datetime.today()):
-        """Trades list given current portfolio and time t.
-        """
+        """Trades list given current portfolio and time t."""
         return NotImplemented
 
     def _nulltrade(self, portfolio):
-        return pd.Series(index=portfolio.index, data=0.)
+        return pd.Series(index=portfolio.index, data=0.0)
 
     def get_rounded_trades(self, portfolio, prices, t):
         """Get trades vector as number of shares, rounded to integers."""
-        return np.round(self.get_trades(portfolio,
-                                        t) / values_in_time(prices, t))[:-1]
+        return np.round(self.get_trades(portfolio, t) / values_in_time(prices, t))[:-1]
 
 
 class Hold(BasePolicy):
-    """Hold initial portfolio.
-    """
+    """Hold initial portfolio."""
 
     def get_trades(self, portfolio, t=dt.datetime.today()):
         return self._nulltrade(portfolio)
@@ -76,12 +81,12 @@ class RankAndLongShort(BasePolicy):
         prediction = values_in_time(self.return_forecast, t)
         sorted_ret = prediction.sort_values()
 
-        short_trades = sorted_ret.index[:self.num_short]
-        long_trades = sorted_ret.index[-self.num_long:]
+        short_trades = sorted_ret.index[: self.num_short]
+        long_trades = sorted_ret.index[-self.num_long :]
 
-        u = pd.Series(0., index=prediction.index)
-        u[short_trades] = -1.
-        u[long_trades] = 1.
+        u = pd.Series(0.0, index=prediction.index)
+        u[short_trades] = -1.0
+        u[long_trades] = 1.0
         u /= sum(abs(u))
         u = sum(portfolio) * u * self.target_turnover
 
@@ -107,13 +112,9 @@ class ProportionalTrade(BasePolicy):
 
     def get_trades(self, portfolio, t=dt.datetime.today()):
         try:
-            missing_time_steps = len(
-                self.time_steps) - next(i for (i, x)
-                                        in enumerate(self.time_steps)
-                                        if x == t)
+            missing_time_steps = len(self.time_steps) - next(i for (i, x) in enumerate(self.time_steps) if x == t)
         except StopIteration:
-            raise Exception(
-                "ProportionalTrade can only trade on the given time steps")
+            raise Exception("ProportionalTrade can only trade on the given time steps")
         deviation = self.targetweight - portfolio / sum(portfolio)
         return sum(portfolio) * deviation / missing_time_steps
 
@@ -123,13 +124,12 @@ class SellAll(BasePolicy):
 
     def get_trades(self, portfolio, t=dt.datetime.today()):
         trade = -pd.Series(portfolio, copy=True)
-        trade.ix[-1] = 0.
+        trade.ix[-1] = 0.0
         return trade
 
 
 class FixedTrade(BasePolicy):
-    """Trade a fixed trade vector.
-    """
+    """Trade a fixed trade vector."""
 
     def __init__(self, tradevec=None, tradeweight=None):
         """Trade the tradevec vector (dollars) or tradeweight weights."""
@@ -139,8 +139,8 @@ class FixedTrade(BasePolicy):
             raise Exception
         self.tradevec = tradevec
         self.tradeweight = tradeweight
-        assert(self.tradevec is None or sum(self.tradevec) == 0.)
-        assert(self.tradeweight is None or sum(self.tradeweight) == 0.)
+        assert self.tradevec is None or sum(self.tradevec) == 0.0
+        assert self.tradeweight is None or sum(self.tradeweight) == 0.0
         super(FixedTrade, self).__init__()
 
     def get_trades(self, portfolio, t=dt.datetime.today()):
@@ -150,14 +150,12 @@ class FixedTrade(BasePolicy):
 
 
 class BaseRebalance(BasePolicy):
-
     def _rebalance(self, portfolio):
         return sum(portfolio) * self.target - portfolio
 
 
 class PeriodicRebalance(BaseRebalance):
-    """Track a target portfolio, rebalancing at given times.
-    """
+    """Track a target portfolio, rebalancing at given times."""
 
     def __init__(self, target, period, **kwargs):
         """
@@ -172,22 +170,16 @@ class PeriodicRebalance(BaseRebalance):
         super(PeriodicRebalance, self).__init__()
 
     def is_start_period(self, t):
-        result = not getattr(t, self.period) == getattr(self.last_t,
-                                                        self.period) if \
-            hasattr(self,
-                    'last_t')\
-            else True
+        result = not getattr(t, self.period) == getattr(self.last_t, self.period) if hasattr(self, "last_t") else True
         self.last_t = t
         return result
 
     def get_trades(self, portfolio, t=dt.datetime.today()):
-        return self._rebalance(portfolio) if self.is_start_period(t) else \
-            self._nulltrade(portfolio)
+        return self._rebalance(portfolio) if self.is_start_period(t) else self._nulltrade(portfolio)
 
 
 class AdaptiveRebalance(BaseRebalance):
-    """ Rebalance portfolio when deviates too far from target.
-    """
+    """Rebalance portfolio when deviates too far from target."""
 
     def __init__(self, target, tracking_error):
         self.target = target
@@ -211,14 +203,13 @@ class SinglePeriodOpt(BasePolicy):
     https://stanford.edu/~boyd/papers/cvx_portfolio.html
     """
 
-    def __init__(self, return_forecast, costs, constraints, solver=None,
-                 solver_opts=None):
+    def __init__(self, return_forecast, costs, constraints, solver=None, solver_opts=None):
 
         if not isinstance(return_forecast, BaseReturnsModel):
             null_checker(return_forecast)
         self.return_forecast = return_forecast
 
-        super(SinglePeriodOpt, self).__init__()
+        super().__init__()
 
         for cost in costs:
             assert isinstance(cost, BaseCost)
@@ -254,11 +245,9 @@ class SinglePeriodOpt(BasePolicy):
         if isinstance(self.return_forecast, BaseReturnsModel):
             alpha_term = self.return_forecast.weight_expr(t, wplus)
         else:
-            alpha_term = cvx.sum(cvx.multiply(
-                values_in_time(self.return_forecast, t).values,
-                wplus))
+            alpha_term = cvx.sum(cvx.multiply(values_in_time(self.return_forecast, t).values, wplus))
 
-        assert(alpha_term.is_concave())
+        assert alpha_term.is_concave()
 
         costs, constraints = [], []
 
@@ -267,36 +256,31 @@ class SinglePeriodOpt(BasePolicy):
             costs.append(cost_expr)
             constraints += const_expr
 
-        constraints += [item for item in (con.weight_expr(t, wplus, z, value)
-                                          for con in self.constraints)]
+        constraints += [item for item in (con.weight_expr(t, wplus, z, value) for con in self.constraints)]
 
         for el in costs:
-            assert (el.is_convex())
+            assert el.is_convex()
 
         for el in constraints:
-            assert (el.is_dcp())
+            assert el.is_dcp()
 
-        self.prob = cvx.Problem(
-            cvx.Maximize(alpha_term - sum(costs)),
-            [cvx.sum(z) == 0] + constraints)
+        self.prob = cvx.Problem(cvx.Maximize(alpha_term - sum(costs)), [cvx.sum(z) == 0] + constraints)
         try:
             self.prob.solve(solver=self.solver, **self.solver_opts)
 
-            if self.prob.status == 'unbounded':
-                logging.error(
-                    'The problem is unbounded. Defaulting to no trades')
+            if self.prob.status == "unbounded":
+                logging.error("The problem is unbounded. Defaulting to no trades")
                 return self._nulltrade(portfolio)
 
-            if self.prob.status == 'infeasible':
-                logging.error(
-                    'The problem is infeasible. Defaulting to no trades')
+            if self.prob.status == "infeasible":
+                logging.error("The problem is infeasible. Defaulting to no trades")
                 return self._nulltrade(portfolio)
 
             return pd.Series(index=portfolio.index, data=(z.value * value))
         except (cvx.SolverError, TypeError):
-            logging.error(
-                'The solver %s failed. Defaulting to no trades' % self.solver)
+            logging.error("The solver %s failed. Defaulting to no trades" % self.solver)
             return self._nulltrade(portfolio)
+
 
 # class LookaheadModel():
 #     """Returns the planning periods for multi-period.
@@ -318,9 +302,7 @@ class SinglePeriodOpt(BasePolicy):
 
 
 class MultiPeriodOpt(SinglePeriodOpt):
-
-    def __init__(self, trading_times,
-                 terminal_weights, lookahead_periods=None, *args, **kwargs):
+    def __init__(self, trading_times, terminal_weights, lookahead_periods=None, *args, **kwargs):
         """
         trading_times: list, all times at which get_trades will be called
         lookahead_periods: int or None. if None uses all remaining periods
@@ -330,22 +312,21 @@ class MultiPeriodOpt(SinglePeriodOpt):
         self.trading_times = trading_times
         # Should there be a constraint that the final portfolio is the bmark?
         self.terminal_weights = terminal_weights
-        super(MultiPeriodOpt, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def get_trades(self, portfolio, t=dt.datetime.today()):
 
         value = sum(portfolio)
-        assert (value > 0.)
+        assert value > 0.0
         w = cvx.Constant(portfolio.values / value)
 
         prob_arr = []
         z_vars = []
 
         # planning_periods = self.lookahead_model.get_periods(t)
-        for tau in \
-                self.trading_times[self.trading_times.index(t):
-                                   self.trading_times.index(t) +
-                                   self.lookahead_periods]:
+        for tau in self.trading_times[
+            self.trading_times.index(t) : self.trading_times.index(t) + self.lookahead_periods
+        ]:
             # delta_t in [pd.Timedelta('%d days' % i) for i in
             # range(self.lookahead_periods)]:
 
@@ -356,15 +337,13 @@ class MultiPeriodOpt(SinglePeriodOpt):
 
             costs, constr = [], []
             for cost in self.costs:
-                cost_expr, const_expr = cost.weight_expr_ahead(
-                    t, tau, wplus, z, value)
+                cost_expr, const_expr = cost.weight_expr_ahead(t, tau, wplus, z, value)
                 costs.append(cost_expr)
                 constr += const_expr
 
             obj -= sum(costs)
             constr += [cvx.sum(z) == 0]
-            constr += [con.weight_expr(t, wplus, z, value)
-                       for con in self.constraints]
+            constr += [con.weight_expr(t, wplus, z, value) for con in self.constraints]
 
             prob = cvx.Problem(cvx.Maximize(obj), constr)
             prob_arr.append(prob)
@@ -376,5 +355,86 @@ class MultiPeriodOpt(SinglePeriodOpt):
             prob_arr[-1].constraints += [wplus == self.terminal_weights.values]
 
         sum(prob_arr).solve(solver=self.solver)
-        return pd.Series(index=portfolio.index,
-                         data=(z_vars[0].value * value))
+        return pd.Series(index=portfolio.index, data=(z_vars[0].value * value))
+
+
+class CustomMultiPeriodOpt(SinglePeriodOpt):
+    def __init__(
+        self, trading_times, terminal_weights, asset_prices, fixed_cost, lookahead_periods=None, *args, **kwargs
+    ):
+        """
+        trading_times: list, all times at which get_trades will be called
+        lookahead_periods: int or None. if None uses all remaining periods
+        """
+        # Number of periods to look ahead.
+        self.lookahead_periods = lookahead_periods
+        self.trading_times = trading_times
+        self.terminal_weights = terminal_weights
+        self.prices = asset_prices
+        self.fixed_cost = fixed_cost
+        super().__init__(*args, **kwargs)
+
+    def get_trades(self, portfolio, t=dt.datetime.today()):
+        assets = portfolio.index[:-1]
+        value = self.prices[assets].loc[t] @ portfolio[assets].T + portfolio[-1]
+        assert value > 0.0
+        p_0 = portfolio
+
+        prob_arr = []
+        z_arr = []
+        cash_arr = []
+        w_arr = []
+
+        w = portfolio.values[:-1]  # portfolio of number of positions
+        cash = portfolio.values[-1]  # cash amount
+
+        fixed_cost = np.ones(w.shape) * self.fixed_cost
+
+        # planning_periods = self.lookahead_model.get_periods(t)
+        for tau in self.trading_times[
+            self.trading_times.index(t) : self.trading_times.index(t) + self.lookahead_periods
+        ]:
+            z_buy = cvx.Variable(w.shape, integer=True)  # number of positions buying
+            z_sell = cvx.Variable(w.shape, integer=True)  # number of positions selling
+            y_buy = cvx.Variable(w.shape, boolean=True)  # whether to buy
+            y_sell = cvx.Variable(w.shape, boolean=True)  # whether to sell
+
+            wplus = w + z_buy - z_sell
+            cash_plus = cash + (z_sell - z_buy) @ self.prices[assets].loc[tau] - y_buy @ fixed_cost - y_sell @ fixed_cost
+
+            costs, constr = [], []
+
+            # constraints
+            M = value / np.min(self.prices[assets].loc[tau]) * 1e5
+            constr += [y_buy * M >= z_buy]  # if not buy, then buy 0, else buy up to M
+            constr += [y_sell * M >= z_sell]  # if not sell, then sell 0, else sell up to M
+
+            constr += [cash_plus >= 0]  # long only on cash
+            constr += [wplus >= 0]  # long only on positions
+
+            # costs
+            trade_costs = y_buy @ fixed_cost + y_sell @ fixed_cost
+
+            # objective
+            ret = self.return_forecast.weight_expr_ahead(t, tau, wplus, assets=assets)
+            obj = ret - trade_costs
+
+            prob = cvx.Problem(cvx.Maximize(obj), constr)
+            prob_arr.append(prob)
+            z_arr.append(z_buy - z_sell)
+            cash_arr.append(cash_plus)
+            w_arr.append(wplus)
+            w = wplus
+            cash = cash_plus
+
+        # Terminal constraint.
+        if self.terminal_weights is not None:
+            prob_arr[-1].constraints.append(wplus >= self.terminal_weights.values)
+
+        sum(prob_arr).solve(solver=self.solver, **self.solver_opts)
+
+        w_vals = [w.value for w in w_arr]
+        cash_vals = [cash.value for cash in cash_arr]
+        z_vals = [z.value for z in z_arr]
+
+        return pd.Series(index=portfolio.index, data=(z_arr[0].value * value))

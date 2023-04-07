@@ -21,13 +21,12 @@ from .expression import Expression
 from .utils import null_checker, values_in_time
 
 
-__all__ = ['HcostModel', 'TcostModel']
+__all__ = ["HcostModel", "TcostModel", "FixedTxModel"]
 
 
 class BaseCost(Expression):
-
     def __init__(self):
-        self.gamma = 1.  # it is changed by gamma * BaseCost()
+        self.gamma = 1.0  # it is changed by gamma * BaseCost()
 
     def weight_expr(self, t, w_plus, z, value):
         cost, constr = self._estimate(t, w_plus, z, value)
@@ -56,7 +55,7 @@ class HcostModel(BaseCost):
       dividends: A dataframe of dividends.
     """
 
-    def __init__(self, borrow_costs, dividends=0.):
+    def __init__(self, borrow_costs, dividends=0.0):
         null_checker(borrow_costs)
         self.borrow_costs = borrow_costs
         null_checker(dividends)
@@ -78,17 +77,13 @@ class HcostModel(BaseCost):
             w_plus = w_plus[:-1]  # TODO fix when cvxpy pandas ready
 
         try:
-            self.expression = cvx.multiply(
-                values_in_time(self.borrow_costs, t), cvx.neg(w_plus))
+            self.expression = cvx.multiply(values_in_time(self.borrow_costs, t), cvx.neg(w_plus))
         except TypeError:
-            self.expression = cvx.multiply(values_in_time(
-                self.borrow_costs, t).values, cvx.neg(w_plus))
+            self.expression = cvx.multiply(values_in_time(self.borrow_costs, t).values, cvx.neg(w_plus))
         try:
-            self.expression -= cvx.multiply(
-                values_in_time(self.dividends, t), w_plus)
+            self.expression -= cvx.multiply(values_in_time(self.dividends, t), w_plus)
         except TypeError:
-            self.expression -= cvx.multiply(
-                values_in_time(self.dividends, t).values, w_plus)
+            self.expression -= cvx.multiply(values_in_time(self.dividends, t).values, w_plus)
 
         return cvx.sum(self.expression), []
 
@@ -96,8 +91,7 @@ class HcostModel(BaseCost):
         return self._estimate(t, w_plus, z, value)
 
     def value_expr(self, t, h_plus, u):
-        self.last_cost = -np.minimum(0, h_plus.iloc[:-1]) * values_in_time(
-            self.borrow_costs, t)
+        self.last_cost = -np.minimum(0, h_plus.iloc[:-1]) * values_in_time(self.borrow_costs, t)
         self.last_cost -= h_plus.iloc[:-1] * values_in_time(self.dividends, t)
 
         return sum(self.last_cost)
@@ -123,8 +117,7 @@ class TcostModel(BaseCost):
       power: The nonlinear tcost power.
     """
 
-    def __init__(self, half_spread, nonlin_coeff=0., sigma=0., volume=1.,
-                 power=1.5):
+    def __init__(self, half_spread, nonlin_coeff=0.0, sigma=0.0, volume=1.0, power=1.5):
         null_checker(half_spread)
         self.half_spread = half_spread
         null_checker(sigma)
@@ -135,7 +128,7 @@ class TcostModel(BaseCost):
         self.nonlin_coeff = nonlin_coeff
         null_checker(power)
         self.power = power
-        super(TcostModel, self).__init__()
+        super().__init__()
 
     def _estimate(self, t, w_plus, z, value):
         """Estimate tcosts given trades.
@@ -157,9 +150,11 @@ class TcostModel(BaseCost):
 
         constr = []
 
-        second_term = values_in_time(self.nonlin_coeff, t) * values_in_time(
-            self.sigma, t) * (value / values_in_time(self.volume, t)) ** (
-            self.power - 1)
+        second_term = (
+            values_in_time(self.nonlin_coeff, t)
+            * values_in_time(self.sigma, t)
+            * (value / values_in_time(self.volume, t)) ** (self.power - 1)
+        )
 
         # no trade conditions
         if np.isscalar(second_term):
@@ -169,33 +164,27 @@ class TcostModel(BaseCost):
         else:  # it is a pd series
             no_trade = second_term.index[second_term.isnull()]
             second_term[no_trade] = 0
-            constr += [z[second_term.index.get_loc(tick)] == 0
-                       for tick in no_trade]
+            constr += [z[second_term.index.get_loc(tick)] == 0 for tick in no_trade]
 
         try:
-            self.expression = cvx.multiply(
-                values_in_time(self.half_spread, t), cvx.abs(z))
+            self.expression = cvx.multiply(values_in_time(self.half_spread, t), cvx.abs(z))
         except TypeError:
-            self.expression = cvx.multiply(
-                values_in_time(self.half_spread, t).values, cvx.abs(z))
+            self.expression = cvx.multiply(values_in_time(self.half_spread, t).values, cvx.abs(z))
         try:
-            self.expression += cvx.multiply(second_term,
-                                            cvx.abs(z) ** self.power)
+            self.expression += cvx.multiply(second_term, cvx.abs(z) ** self.power)
         except TypeError:
-            self.expression += cvx.multiply(
-                second_term.values, cvx.abs(z) ** self.power)
+            self.expression += cvx.multiply(second_term.values, cvx.abs(z) ** self.power)
 
         return cvx.sum(self.expression), constr
 
     def value_expr(self, t, h_plus, u):
 
         u_nc = u.iloc[:-1]
-        self.tmp_tcosts = (
-            np.abs(u_nc) * values_in_time(self.half_spread, t) +
-            values_in_time(self.nonlin_coeff, t) * values_in_time(self.sigma,
-                                                                  t) *
-            np.abs(u_nc) ** self.power /
-            (values_in_time(self.volume, t) ** (self.power - 1)))
+        self.tmp_tcosts = np.abs(u_nc) * values_in_time(self.half_spread, t) + values_in_time(
+            self.nonlin_coeff, t
+        ) * values_in_time(self.sigma, t) * np.abs(u_nc) ** self.power / (
+            values_in_time(self.volume, t) ** (self.power - 1)
+        )
 
         return self.tmp_tcosts.sum()
 
@@ -210,13 +199,78 @@ class TcostModel(BaseCost):
         return self.tmp_tcosts
 
     def _estimate_ahead(self, t, tau, w_plus, z, value):
-        """Returns the estimate at time t of tcost at time tau.
-        """
+        """Returns the estimate at time t of tcost at time tau."""
         return self._estimate(t, w_plus, z, value)
 
     def est_period(self, t, tau_start, tau_end, w_plus, z, value):
-        """Returns the estimate at time t of tcost over given period.
+        """Returns the estimate at time t of tcost over given period."""
+        K = (tau_end - tau_start).days
+        tcost, constr = self.weight_expr(t, None, z / K, value)
+        return tcost * K, constr
+
+
+class FixedTxModel(BaseCost):
+    """A model for transaction costs.
+
+    Attributes:
+      Fixed: A value for the fixed transaction cost
+    """
+
+    def __init__(self, cost, prices):
+        null_checker(cost)
+        self.cost = cost
+        self.prices = prices
+        super().__init__()
+
+    def _estimate(self, t, w_plus, z_buy, z_sell, value):
+        """Estimate tcosts given trades.
+
+        Args:
+          t: time of estimate
+          z: trades
+          value: portfolio value
+
+        Returns:
+          An expression for the tcosts and corresponding constraints.
         """
+        M = value / np.min(self.prices.loc[t])
+        # create binary array
+        y_buy = cvx.Variable(shape=(z_buy.shape), boolean=True)
+        y_sell = cvx.Variable(shape=(z_sell.shape), boolean=True)
+
+        # define constraints to set y[i] to 1 if x[i] > 0 and 0 otherwise
+        constr = [y_buy[i] * M >= z_buy[i] for i in range(z_buy.shape[0])]
+        constr += [y_sell[i] * M >= z_sell[i] for i in range(z_sell.shape[0])]
+
+        self.expression = self.cost * cvx.sum(y_buy + y_sell)
+
+        return self.expression, constr
+
+    def value_expr(self, t, h_plus, u):
+
+        trades = (np.abs(u) > 0).astype(int) * self.cost
+        return trades.sum()
+
+    def optimization_log(self, t):
+        try:
+            return self.expression.value
+        except AttributeError:
+            return np.nan
+
+    def simulation_log(self, t):
+        # TODO find another way
+        return self.tmp_tcosts
+
+    def weight_expr_ahead(self, t, tau, w_plus, z_buy, z_sell, value):
+        cost, constr = self._estimate_ahead(t, tau, w_plus, z_buy, z_sell, value)
+        return self.gamma * cost, constr
+
+    def _estimate_ahead(self, t, tau, w_plus, z_buy, z_sell, value):
+        """Returns the estimate at time t of tcost at time tau."""
+        return self._estimate(t, w_plus, z_buy, z_sell, value)
+
+    def est_period(self, t, tau_start, tau_end, w_plus, z, value):
+        """Returns the estimate at time t of tcost over given period."""
         K = (tau_end - tau_start).days
         tcost, constr = self.weight_expr(t, None, z / K, value)
         return tcost * K, constr
