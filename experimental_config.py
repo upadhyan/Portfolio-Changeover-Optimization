@@ -2,8 +2,8 @@ import pandas as pd
 import numpy as np
 from darts import TimeSeries
 from darts.models import NHiTSModel
-from darts.metrics import mape
-from darts.utils.losses import MapeLoss
+from darts.metrics import mape, smape
+from darts.utils.losses import MapeLoss, SmapeLoss
 import pickle
 import torch
 import random
@@ -40,7 +40,7 @@ class ExperimentInfo:
         self.initial_portfolio_value = None
         self.lookback = lookback
         self.full_trading_times = None
-        self.trading_cost = np.random.randint(2,10)
+        self.trading_cost = np.random.randint(2, 10)
         self.exp_id = None
         self.generate_experiment(stock_prices, covariates)
 
@@ -97,7 +97,7 @@ class ExperimentInfo:
         while (self.final_portfolio + add) @ self.initial_prices < self.initial_portfolio_value:
             self.final_portfolio = self.final_portfolio + add
             add[random.randint(0, self.num_stocks - 1)] = 1
-        #append zero to final portfolio
+        # append zero to final portfolio
         self.final_portfolio = np.append(self.final_portfolio, 0)
         self.initial_portfolio = pd.Series(self.initial_portfolio, index=self.stocks + ['cash'])
         self.initial_portfolio.name = self.initial_date
@@ -186,8 +186,9 @@ class ExperimentInfo:
 
     def generate_exp_id(self):
         self.exp_id = f"{self.num_stocks}_{self.budget}" \
-                        f"_{int(self.initial_portfolio_value)}" \
-                        f"_{int(self.trading_cost)}"
+                      f"_{int(self.initial_portfolio_value)}" \
+                      f"_{int(self.trading_cost)}"
+
     def create_forecasts(self,
                          time_series, subset, train, val,
                          cov_ts):
@@ -214,10 +215,10 @@ class ExperimentInfo:
                                                verbose=False,
                                                past_covariates=cov_ts)
             current_prediction_df = current_prediction.pd_dataframe()
+            # if any element of current_prediction_df is nan, raise an error
             if current_prediction_df.isna().sum().sum() > 0:
                 raise ExperimentGenerationError("Forecast contains nan values")
             predictions[i] = current_prediction_df
-            # if any element of current_prediction_df is nan, raise an error
             errors.append(mape(updated_val, current_prediction))
         self.errors = errors
         self.forecasts = predictions
@@ -232,26 +233,31 @@ class ExperimentInfo:
         return random_date
 
 
-def generate_experiments(stock_price_df, covariates, num_experiments, output_dir, lookback=128):
+def generate_experiments(stock_price_df, covariates, num_experiments, output_dir, lookback=128, error_max=9):
     pbar = trange(num_experiments)
     average_errors = []
     for i in pbar:
-        try:
-            experiment = ExperimentInfo(stock_price_df, covariates, lookback)
-            # check if the output directory exists, if not, create it
-            if not os.path.exists(output_dir):
-                os.makedirs(output_dir)
-            f_name = f'exp_{experiment.num_stocks}_{experiment.budget}' \
-                     f'_{int(experiment.initial_portfolio_value)}' \
-                     f'_{int(experiment.trading_cost)}.pkl'
-            # save the experiment to a pickle file in output_dir
-            with open(os.path.join(output_dir, f_name), 'wb') as f:
-                pickle.dump(experiment, f)
-            average_errors.append(experiment.average_error)
-            pbar.set_description(f"Experiment {i} saved to {f_name}. Error is {experiment.average_error}")
-
-        except ExperimentGenerationError as e:
-            pbar.set_description(f"Experiment {i} failed with error {e}.")
+        too_much_error = True
+        while too_much_error:
+            try:
+                experiment = ExperimentInfo(stock_price_df, covariates, lookback)
+                # check if the output directory exists, if not, create it
+                if not os.path.exists(output_dir):
+                    os.makedirs(output_dir)
+                f_name = f'exp_{experiment.num_stocks}_{experiment.budget}' \
+                         f'_{int(experiment.initial_portfolio_value)}' \
+                         f'_{int(experiment.trading_cost)}.pkl'
+                # save the experiment to a pickle file in output_dir
+                if experiment.average_error < error_max:
+                    too_much_error = False
+                    with open(os.path.join(output_dir, f_name), 'wb') as f:
+                        pickle.dump(experiment, f)
+                    average_errors.append(experiment.average_error)
+                    pbar.set_description(f"Experiment {i} saved to {f_name}. Error is {experiment.average_error}")
+                else:
+                    pbar.set_description(f"Retrying experiment {i}. Error is {experiment.average_error}")
+            except ExperimentGenerationError as e:
+                pbar.set_description(f"Experiment {i} failed with error {e}.")
         gc.collect()
     print(f"Average error is {np.mean(average_errors)}")
 
@@ -266,4 +272,4 @@ if __name__ == '__main__':
     # sort rates_df by date
     rates_df = rates_df.sort_index()
     print("Start Generation")
-    generate_experiments(prices, rates_df, 1, 'experiments', 256)
+    generate_experiments(prices, rates_df, 10, 'experiments', 256)
