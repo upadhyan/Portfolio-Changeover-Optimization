@@ -1,117 +1,66 @@
-import numpy as np
-import pandas as pd
-import datetime as dt
-
-import cvxpy as cvx
 import gurobipy as gp
 from gurobipy import GRB
+from abc import ABC, abstractmethod
+from experimental_config import *
+from time import time
 
 
-class OnlineReturnsForecasts:
-    def __init__(self, prices, trading_dates, samples=None):
-        self.prices = prices
-        self.ret = prices.pct_change().iloc[1:]
-        self.trading_dates = trading_dates
-        self.r_hat = None
-        super().__init__()
+class TradingPolicy(ABC):
+    def __init__(self, experiment: ExperimentInfo):
+        self.exp = experiment
+        self.trading_times = experiment.full_trading_times
 
-    def get_prices(self, t, tau, assets):
-        """Returns the estimate at time t of alpha at time tau.
-
-        Args:
-          t: time estimate is made.
-          wplus: An expression for holdings.
-          tau: time of alpha being estimated.
-
-        Returns:
-          An expression for the alpha.
-        """
-        if t == tau:
-            self._update(t, assets)
-        # return self.r_hat.loc[tau].values.T @ wplus
-        return self.p_hat.loc[tau].values
-
-    def _update(self, t, assets=None):
-        rng = np.random.default_rng()
-        # samples = 1000
-        if assets is not None:
-            ret = self.ret[assets]
-        else:
-            ret = self.ret
-        mean = ret.loc[:t].mean()
-        cov = ret.loc[:t].cov()
-        # r_hat = rng.multivariate_normal(mean = mean, cov = cov, size = (samples, 30)).mean(axis=0)
-        r_hat = rng.multivariate_normal(mean=mean, cov=cov, size=len(self.trading_dates))
-        self.r_hat = pd.DataFrame(data=r_hat, columns=ret.columns, index=self.trading_dates)
-        self.p_hat = (self.r_hat + 1).cumprod().multiply(self.prices[assets].loc[t])
+    @abstractmethod
+    def get_trades(self, portfolio, t):
+        pass
 
 
-class CustomMultiPeriodOpt:
-    def __init__(
-        self,
-        trading_times,
-        terminal_weights,
-        asset_prices,
-        fixed_cost,
-        return_forecast,
-        lookahead_periods=None,
-        *args,
-        **kwargs
-    ):
-        """
-        trading_times: list, all times at which get_trades will be called
-        lookahead_periods: int or None. if None uses all remaining periods
-        """
-        # Number of periods to look ahead.
-        self.lookahead_periods = lookahead_periods
-        self.trading_times = trading_times
-        self.terminal_weights = terminal_weights
-        self.prices = asset_prices
-        self.fixed_cost = fixed_cost
-        self.return_forecast = return_forecast
-        # super().__init__(*args, **kwargs)
+class CustomMultiPeriodOpt(TradingPolicy):
+    def __init__(self, experiment: ExperimentInfo):
+        super().__init__(experiment)
+        self.price_dict = self.convert_to_price_dict()
 
-    def get_trades(self, portfolio, t=dt.datetime.today()):
-        ### GUROBI SETTINGS ###
+    def convert_to_price_dict(self):
+        price_dict = {}
+        for i in range(len(self.trading_times)):
+            price_dict[self.trading_times[i]] = self.exp.forecasts[i]
+        return price_dict
+
+    def get_trades(self, portfolio, t):
         env = gp.Env(empty=True)
         env.setParam("OutputFlag", False)
         # env.setParam("TimeLimit",time_limit)
         env.start()
         #######################
+        p = portfolio.values[:-1]  # portfolio of number of positions
+        cash = portfolio.values[-1]  # cash amount
 
         assets = portfolio.index[:-1]
-        value = self.prices[assets].loc[t] @ portfolio[assets].T + portfolio[-1]
+        value = self.exp.truth.loc[t] @ p + cash
         assert value > 0.0
-
+        time_string = t.strftime("%Y-%m-%d")
+        print(f"Current Portfolio Value at {time_string}: {value}")
         prob_arr = []
         z_arr = []
         cash_arr = []
         p_arr = []
 
-        p = portfolio.values[:-1]  # portfolio of number of positions
-        cash = portfolio.values[-1]  # cash amount
-
-        F = np.ones(p.shape) * self.fixed_cost
+        F = np.ones(p.shape) * self.exp.trading_cost
         M = value * 1e3
 
+        trading_information = self.price_dict[t]
+        p_next = None
         m = gp.Model(env=env)
+        n_timesteps = len(trading_information.index)
+        for time_step in trading_information.index:
+            prices = trading_information.loc[time_step].values
 
-        # planning_periods = self.lookahead_model.get_periods(t)
-        for tau in self.trading_times[
-            self.trading_times.index(t) : self.trading_times.index(t) + self.lookahead_periods
-        ]:
-            prices = self.return_forecast.get_prices(t, tau, assets)
-
-            # Define in loop vars
-            # Define Variables
-            z_buy = m.addMVar(p.shape, vtype=GRB.INTEGER)
-            z_sell = m.addMVar(p.shape, vtype=GRB.INTEGER)
+            z_buy = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
+            z_sell = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
             y_sell = m.addMVar(p.shape, vtype=GRB.BINARY)
             y_buy = m.addMVar(p.shape, vtype=GRB.BINARY)
 
-            # print(prices @ z_sell)
-
-            # This is the next iteration of portfolio
+            # Next Portfolio
             p_next = p + z_buy - z_sell
             cash_next = prices @ (z_sell - z_buy) - F @ y_sell - F @ y_buy + cash
 
@@ -119,61 +68,70 @@ class CustomMultiPeriodOpt:
             ### if we sell a stock, we pay a trading price
             m.addConstr(M * (y_sell) >= z_sell)
 
-            ### If we buy a stock, we pay a trading fee
+            ## If we buy a stock, we pay a trading fee
             m.addConstr(M * (y_buy) >= z_buy)
 
-            # No borrowing
+            ## No borrowing
             m.addConstr(cash_next >= 0)
 
-            # No shorting
+            ## No shorting
             m.addConstr(p_next >= 0)
 
             prob_arr.append(prices @ p_next - F @ z_sell - F @ z_buy)
             cash = cash_next
             p = p_next
-            # prob_arr.append(m)
 
             z_arr.append(z_buy - z_sell)
             cash_arr.append(cash_next)
             p_arr.append(p_next)
 
+        final_p = self.exp.final_portfolio.values[:-1]
         # Terminal constraint.
-        if self.terminal_weights is not None:
-            # Terminal weights constraints
-            m.addConstr(p_next >= self.terminal_weights.values)
+        m.addConstr(p_next >= final_p)
 
         # Combine all time instances
         obj = sum(prob_arr)
-        m.setObjective(obj, GRB.MAXIMIZE)
-        m.optimize()
 
+        m.setObjective(obj, GRB.MAXIMIZE)
+        m.update()
+        # get model constraints
+        print(
+            f"\t Optimizing with {n_timesteps} time steps, "
+            f"{len(m.getConstrs())} constraints, and {len(m.getVars())} variables..."
+        )
+        t1 = time()
+        m.optimize()
+        t2 = time()
+        print("\t Optimized. Time taken: ", t2 - t1)
         try:
             self.p_vals = [p.getValue() for p in p_arr]
             self.cash_vals = [cash.getValue() for cash in cash_arr]
             self.z_vals = [z.getValue() for z in z_arr]
-            print(f"Z:{self.z_vals[0]}")
-            print(f"P:{self.p_vals[0]}")
         except Exception as e:
             print(e)
-
         assert (self.p_vals[0] >= 0).all()
-        return pd.Series(index=portfolio.index, data=(np.append(self.z_vals[0], self.cash_vals[0])))
+        del m
+        del env
+        gc.collect()
+        return pd.Series(index=portfolio.index, data=(np.append(self.z_vals[0], self.cash_vals[0])), name=t)
 
 
 class MarketSimulator:
-    def __init__(self, trading_times, asset_prices, policy):
-        self.trading_times = trading_times
-        self.asset_prices = asset_prices
+    def __init__(self, experiment: ExperimentInfo, policy: TradingPolicy):
+        self.configuration = experiment
+        self.trading_times = experiment.full_trading_times
         self.policy = policy
+        self.historical_trades = None
 
-    def run(self, starting_portfolio):
-        self.hist_trades = []
-        portfolio = starting_portfolio.copy()
-        print(f"SP: {portfolio.to_numpy()}")
+    def run(self):
+        self.historical_trades = []
+        portfolio = self.configuration.initial_portfolio.copy()
+        print("Starting Simulation")
         for t in self.trading_times:
             trades = self.policy.get_trades(portfolio, t)
-            self.hist_trades.append(trades)
+            self.historical_trades.append(trades)
             portfolio = self._apply_trades(portfolio, trades)
+            gc.collect()
         return portfolio
 
     def _apply_trades(self, portfolio, trades):
