@@ -40,7 +40,8 @@ class ExperimentInfo:
         self.initial_portfolio_value = None
         self.lookback = lookback
         self.full_trading_times = None
-        self.trading_cost = np.random.randint(0,10)
+        self.trading_cost = np.random.randint(2,10)
+        self.exp_id = None
         self.generate_experiment(stock_prices, covariates)
 
     # Make a function that accepts a list as an input
@@ -181,7 +182,12 @@ class ExperimentInfo:
         # Generate Forecasts
         self.create_forecasts(ts, subset, train, val,
                               cov_ts)
+        self.generate_exp_id()
 
+    def generate_exp_id(self):
+        self.exp_id = f"{self.num_stocks}_{self.budget}" \
+                        f"_{int(self.initial_portfolio_value)}" \
+                        f"_{int(self.trading_cost)}"
     def create_forecasts(self,
                          time_series, subset, train, val,
                          cov_ts):

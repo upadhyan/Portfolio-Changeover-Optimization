@@ -1,63 +1,23 @@
-import numpy as np
-import pandas as pd
-import datetime as dt
-
-import cvxpy as cvx
 import gurobipy as gp
 from gurobipy import GRB
 from abc import ABC, abstractmethod
 from experimental_config import *
+from time import time
 
 
 class TradingPolicy(ABC):
+    def __init__(self, experiment: ExperimentInfo):
+        self.exp = experiment
+        self.trading_times = experiment.full_trading_times
+
     @abstractmethod
     def get_trades(self, portfolio, t):
         pass
 
 
-class OnlineReturnsForecasts:
-    def __init__(self, prices, trading_dates, samples=None):
-        self.prices = prices
-        self.ret = prices.pct_change().iloc[1:]
-        self.trading_dates = trading_dates
-        self.r_hat = None
-        super().__init__()
-
-    def get_prices(self, t, tau, assets):
-        """Returns the estimate at time t of alpha at time tau.
-
-        Args:
-          t: time estimate is made.
-          wplus: An expression for holdings.
-          tau: time of alpha being estimated.
-
-        Returns:
-          An expression for the alpha.
-        """
-        if t == tau:
-            self._update(t, assets)
-        # return self.r_hat.loc[tau].values.T @ wplus
-        return self.p_hat.loc[tau].values
-
-    def _update(self, t, assets=None):
-        rng = np.random.default_rng()
-        # samples = 1000
-        if assets is not None:
-            ret = self.ret[assets]
-        else:
-            ret = self.ret
-        mean = ret.loc[:t].mean()
-        cov = ret.loc[:t].cov()
-        # r_hat = rng.multivariate_normal(mean = mean, cov = cov, size = (samples, 30)).mean(axis=0)
-        r_hat = rng.multivariate_normal(mean=mean, cov=cov, size=len(self.trading_dates))
-        self.r_hat = pd.DataFrame(data=r_hat, columns=ret.columns, index=self.trading_dates)
-        self.p_hat = (self.r_hat + 1).cumprod().multiply(self.prices[assets].loc[t])
-
-
 class CustomMultiPeriodOpt(TradingPolicy):
-    def __init__(self, experiment):
-        self.exp = experiment
-        self.trading_times = experiment.full_trading_times
+    def __init__(self, experiment: ExperimentInfo):
+        super().__init__(experiment)
         self.price_dict = self.convert_to_price_dict()
 
     def convert_to_price_dict(self):
@@ -92,8 +52,8 @@ class CustomMultiPeriodOpt(TradingPolicy):
         p_next = None
         m = gp.Model(env=env)
         n_timesteps = len(trading_information.index)
-        for time in trading_information.index:
-            prices = trading_information.loc[time].values
+        for time_step in trading_information.index:
+            prices = trading_information.loc[time_step].values
 
             z_buy = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
             z_sell = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
@@ -139,8 +99,10 @@ class CustomMultiPeriodOpt(TradingPolicy):
             f"\t Optimizing with {n_timesteps} time steps, "
             f"{len(m.getConstrs())} constraints, and {len(m.getVars())} variables..."
         )
+        t1 = time()
         m.optimize()
-        print("\t Optimized")
+        t2 = time()
+        print("\t Optimized. Time taken: ", t2 - t1)
         try:
             self.p_vals = [p.getValue() for p in p_arr]
             self.cash_vals = [cash.getValue() for cash in cash_arr]
@@ -148,6 +110,9 @@ class CustomMultiPeriodOpt(TradingPolicy):
         except Exception as e:
             print(e)
         assert (self.p_vals[0] >= 0).all()
+        del m
+        del env
+        gc.collect()
         return pd.Series(index=portfolio.index, data=(np.append(self.z_vals[0], self.cash_vals[0])), name=t)
 
 
@@ -166,6 +131,7 @@ class MarketSimulator:
             trades = self.policy.get_trades(portfolio, t)
             self.historical_trades.append(trades)
             portfolio = self._apply_trades(portfolio, trades)
+            gc.collect()
         return portfolio
 
     def _apply_trades(self, portfolio, trades):
