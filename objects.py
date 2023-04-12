@@ -1,3 +1,5 @@
+import gc
+
 import gurobipy as gp
 from gurobipy import GRB
 from abc import ABC, abstractmethod
@@ -42,6 +44,7 @@ class TradingPolicy(ABC):
 class DayTradingPolicy(TradingPolicy):
     def __init__(self, experiment: ExperimentInfo, verbose=True, **kwargs):
         super().__init__(experiment, verbose, **kwargs)
+        self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.trading_cost
 
     def get_trades(self, portfolio, t):
         env = gp.Env(empty=True)
@@ -61,7 +64,7 @@ class DayTradingPolicy(TradingPolicy):
         cash_arr = []
         p_arr = []
 
-        F = np.ones(p.shape) * self.exp.trading_cost
+        F = self.F
         M = value * 1e3
 
         trading_information = pd.concat([pd.DataFrame(self.known_dict[t]).T, self.price_dict[t]])
@@ -94,7 +97,7 @@ class DayTradingPolicy(TradingPolicy):
             ## No shorting
             m.addConstr(p_next >= 0)
 
-            prob_arr.append(prices @ p_next - F @ z_sell - F @ z_buy)
+            prob_arr.append(prices @ p_next - F @ y_sell - F @ y_buy)
             cash = cash_next
             p = p_next
 
@@ -153,6 +156,7 @@ class RigidDayTrading(TradingPolicy):
         self.cash_vals = None
         self.z_vals = None
         self.value_dictionary = None
+        self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.trading_cost
 
     def get_trades(self, portfolio, t):
         if self.initial:
@@ -160,8 +164,9 @@ class RigidDayTrading(TradingPolicy):
             self.initial = False
         value = portfolio.values[:-1] @ self.known_dict[t] + portfolio.values[-1]
         trades = self.z_vals[t]
-        cash = self.known_dict[t] @ trades * -1
-        return pd.Series(index=portfolio.index, data=(np.append(trades, cash)), name=t), value
+        trade_binary = self.y_vals[t]
+        cash_change = self.known_dict[t] @ trades * -1 - self.F @ trade_binary
+        return pd.Series(index=portfolio.index, data=(np.append(trades, cash_change)), name=t), value
 
     def calculate_trades(self, portfolio, t):
         env = gp.Env(empty=True)
@@ -180,8 +185,8 @@ class RigidDayTrading(TradingPolicy):
         z_arr = []
         cash_arr = []
         p_arr = []
-
-        F = np.ones(p.shape) * self.exp.trading_cost
+        y_arr = []
+        F = self.F
         M = value * 1e3
 
         trading_information = pd.concat([pd.DataFrame(self.known_dict[t]).T, self.price_dict[t]])
@@ -213,11 +218,12 @@ class RigidDayTrading(TradingPolicy):
             ## No shorting
             m.addConstr(p_next >= 0)
 
-            prob_arr.append(prices @ p_next - F @ z_sell - F @ z_buy)
+            prob_arr.append(prices @ p_next - F @ y_sell - F @ y_buy)
             cash = cash_next
             p = p_next
 
             z_arr.append(z_buy - z_sell)
+            y_arr.append(y_buy + y_sell)
             cash_arr.append(cash_next)
             p_arr.append(p_next)
 
@@ -241,10 +247,12 @@ class RigidDayTrading(TradingPolicy):
         self.vprint(f"\t Optimized. Time taken: {t2 - t1}", )
         try:
             self.z_vals = {}
+            self.y_vals = {}
             self.value_dictionary = {}
             self.cash_vals = {}
             for i, time_step in enumerate(trading_information.index):
                 self.z_vals[time_step] = z_arr[i].getValue()
+                self.y_vals[time_step] = y_arr[i].getValue()
                 if i == 0:
                     self.value_dictionary[time_step] = value
                 else:
@@ -254,6 +262,7 @@ class RigidDayTrading(TradingPolicy):
             self.p_vals = [p.getValue() for p in p_arr]
         except Exception as e:
             self.vprint(e)
+
         assert (self.p_vals[0] >= 0).all()
         del m
         del env
@@ -271,8 +280,11 @@ class MarketSimulator:
         self.trading_times = []
         self.solve_times = []
         self.verbose = verbose
+        self.gain = 0
+        self.status = "Not Run"
 
     def run(self):
+        self.status = "Running"
         self.historical_trades = []
         # Get initial portfolio
         portfolio = self.configuration.initial_portfolio.copy()
@@ -294,19 +306,30 @@ class MarketSimulator:
             self.trading_dict[relevant_time] = trades
             # Apply trades
             portfolio = self._apply_trades(portfolio, trades)
+            if portfolio is None:
+                self.gain = 0
+                self.status = "Infeasible"
+                break
             self.portfolio_value.append(value)
             self.trading_times.append(relevant_time)
             gc.collect()
+        if self.status == "Running":
+            self.status = "Complete"
+            self.gain = self.evaluate_gain()
         return portfolio
 
     def evaluate_gain(self):
         return (self.portfolio_value[-1] - self.portfolio_value[0]) / self.portfolio_value[0]
 
     def _apply_trades(self, portfolio, trades):
-        # portfolio[:-1] = portfolio[:-1] + trades[:-1]  # apply trades
-        # portfolio[-1] = trades[-1]  # update cash
-        # return portfolio
-        return portfolio + trades
+        new_portfolio = portfolio + trades
+        if not (new_portfolio >= 0).all():
+            # get all items in the list except the last one
+            self.historical_trades = self.historical_trades[:-1]
+            self.portfolio_value = [np.nan] * 3
+            return None
+        else:
+            return new_portfolio
 
     def plot_value(self, ax=None, **kwargs):
         if ax is None:
@@ -365,9 +388,10 @@ class MultiSimRunner:
                     "pct_variance": experiment.pct_variance,
                     "initial_budget": experiment.budget,
                     "trading_cost": experiment.trading_cost,
-                    "average_error": experiment.average_error
+                    "average_error": experiment.average_error,
+                    "status": simulator.status
                 })
-
+                gc.collect()
         self.results = pd.DataFrame(result_list)
 
     def get_results(self):
