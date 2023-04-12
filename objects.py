@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from experimental_config import *
 from time import time
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 
 class TradingPolicy(ABC):
@@ -159,7 +160,7 @@ class RigidDayTrading(TradingPolicy):
             self.initial = False
         value = portfolio.values[:-1] @ self.known_dict[t] + portfolio.values[-1]
         trades = self.z_vals[t]
-        cash = self.known_dict[t] @ trades
+        cash = self.known_dict[t] @ trades * -1
         return pd.Series(index=portfolio.index, data=(np.append(trades, cash)), name=t), value
 
     def calculate_trades(self, portfolio, t):
@@ -260,7 +261,7 @@ class RigidDayTrading(TradingPolicy):
 
 
 class MarketSimulator:
-    def __init__(self, experiment: ExperimentInfo, policy: TradingPolicy):
+    def __init__(self, experiment: ExperimentInfo, policy: TradingPolicy, verbose=True):
         self.configuration = experiment
         self.stored_times = experiment.full_trading_times
         self.policy = policy
@@ -269,13 +270,17 @@ class MarketSimulator:
         self.portfolio_value = []
         self.trading_times = []
         self.solve_times = []
+        self.verbose = verbose
 
     def run(self):
         self.historical_trades = []
         # Get initial portfolio
         portfolio = self.configuration.initial_portfolio.copy()
-        print("Starting Simulation")
-        pbar = trange(len(self.stored_times))
+        if self.verbose:
+            print("Starting Simulation")
+            pbar = trange(len(self.stored_times))
+        else:
+            pbar = range(len(self.stored_times))
         for i in pbar:
             # Get trade for the previous time step
             t = self.stored_times[i]
@@ -334,12 +339,38 @@ class MultiSimRunner:
     def __init__(self, experiments, policies):
         self.experiments = experiments
         self.policies = policies
-        self.results = {}
+        self.results = []
         self.simulators = {}
 
     def run(self):
-        for experiment in self.experiments:
+        result_list = []
+        for experiment in tqdm(self.experiments):
             for policy in self.policies:
-                simulator = MarketSimulator(experiment, policy)
+                if policy == "RigidDayTrading":
+                    policy_instance = RigidDayTrading(experiment, verbose=False)
+                elif policy == "DayTrading":
+                    policy_instance = DayTradingPolicy(experiment, verbose=False)
+                else:
+                    raise Exception("Policy not found")
+                simulator = MarketSimulator(experiment, policy_instance, verbose=False)
                 simulator.run()
-                self.simulators[(experiment, policy)] = simulator
+                self.simulators[(experiment.exp_id, policy)] = simulator
+                result_list.append({
+                    "experiment": experiment.exp_id,
+                    "policy": policy,
+                    "Gain": simulator.evaluate_gain(),
+                    "Final Value": simulator.portfolio_value[-1],
+                    "Initial Value": simulator.portfolio_value[0],
+                    "num_stocks": experiment.num_stocks,
+                    "pct_variance": experiment.pct_variance,
+                    "initial_budget": experiment.budget,
+                    "trading_cost": experiment.trading_cost,
+                    "average_error": experiment.average_error
+                })
+
+        self.results = pd.DataFrame(result_list)
+
+    def get_results(self):
+        if self.results is None:
+            self.run()
+        return self.results
