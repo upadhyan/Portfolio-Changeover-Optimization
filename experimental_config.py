@@ -270,4 +270,4 @@ if __name__ == "__main__":
     # sort rates_df by date
     rates_df = rates_df.sort_index()
     print("Start Generation")
-    generate_experiments(prices, rates_df, 1, "experiments", 128, 50)
+    generate_experiments(prices, rates_df, 10, "experiments", lookback=48, error_max=9)

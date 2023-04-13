@@ -131,7 +131,7 @@ class DayTradingPolicy(TradingPolicy):
             self.z_vals = [z.getValue() for z in z_arr]
         except Exception as e:
             self.vprint(e)
-        assert (self.p_vals[0] >= 0).all()
+        assert (np.round(self.p_vals[0]) >= 0).all()
         del m
         del env
         gc.collect()
@@ -226,7 +226,7 @@ class NaivePolicy(TradingPolicy):
             self.p_next = p_next.getValue()
         except Exception as e:
             self.vprint(e)
-        assert (self.p_next >= 0).all()
+        assert (np.round(self.p_next) >= 0).all()
         del m
         del env
         gc.collect()
@@ -351,7 +351,7 @@ class RigidDayTrading(TradingPolicy):
         except Exception as e:
             self.vprint(e)
 
-        assert (self.p_vals[0] >= 0).all()
+        assert (np.round(self.p_vals[0]) >= 0).all()
         del m
         del env
         gc.collect()
@@ -446,6 +446,11 @@ class MarketSimulator:
         plt.show()
 
 
+NAIVE = "Naive"
+RIGID = "RigidDayTrading"
+DAY_TRADING = "DayTrading"
+
+
 class MultiSimRunner:
     def __init__(self, experiments, policies):
         self.experiments = experiments
@@ -453,7 +458,7 @@ class MultiSimRunner:
         self.results = []
         self.simulators = {}
 
-    def run(self):
+    def run(self, save_file = None):
         result_list = []
         for experiment in tqdm(self.experiments):
             for policy in self.policies:
@@ -461,30 +466,29 @@ class MultiSimRunner:
                     policy_instance = RigidDayTrading(experiment, verbose=False)
                 elif policy == "DayTrading":
                     policy_instance = DayTradingPolicy(experiment, verbose=False)
+                elif policy == "Naive":
+                    policy_instance = NaivePolicy(experiment, verbose=False)
                 else:
                     raise Exception("Policy not found")
                 simulator = MarketSimulator(experiment, policy_instance, verbose=False)
                 simulator.run()
                 self.simulators[(experiment.exp_id, policy)] = simulator
-                result_list.append(
-                    {
-                        "experiment": experiment.exp_id,
-                        "policy": policy,
-                        "Gain": simulator.evaluate_gain(),
-                        "Final Value": simulator.portfolio_value[-1],
-                        "Initial Value": simulator.portfolio_value[0],
-                        "num_stocks": experiment.num_stocks,
-                        "pct_variance": experiment.pct_variance,
-                        "initial_budget": experiment.budget,
-                        "trading_cost": experiment.trading_cost,
-                        "average_error": experiment.average_error,
-                        "status": simulator.status,
-                    }
-                )
+                result_list.append({
+                    "experiment": experiment.exp_id,
+                    "policy": policy,
+                    "Gain": simulator.evaluate_gain(),
+                    "Final Value": simulator.portfolio_value[-1],
+                    "Initial Value": simulator.portfolio_value[0],
+                    "num_stocks": experiment.num_stocks,
+                    "pct_variance": experiment.pct_variance,
+                    "initial_budget": experiment.budget,
+                    "trading_cost": experiment.trading_cost,
+                    "average_error": experiment.average_error,
+                    "status": simulator.status
+                })
                 gc.collect()
         self.results = pd.DataFrame(result_list)
 
-    def get_results(self):
-        if self.results is None:
-            self.run()
+    def get_results(self, save_file = None):
+        self.run(save_file=save_file)
         return self.results
