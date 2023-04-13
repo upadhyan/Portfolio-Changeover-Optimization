@@ -122,7 +122,9 @@ class DayTradingPolicy(TradingPolicy):
         t1 = time()
         m.optimize()
         t2 = time()
-        self.vprint(f"\t Optimized. Time taken: {t2 - t1}", )
+        self.vprint(
+            f"\t Optimized. Time taken: {t2 - t1}",
+        )
         try:
             self.p_vals = [p.getValue() for p in p_arr]
             self.cash_vals = [_cash.getValue() for _cash in cash_arr]
@@ -133,18 +135,26 @@ class DayTradingPolicy(TradingPolicy):
         del m
         del env
         gc.collect()
-        return pd.Series(index=portfolio.index, data=(np.append(self.z_vals[0], self.cash_vals[0] - current_cash)),
-                         name=t), value
+        return (
+            pd.Series(
+                index=portfolio.index, data=(np.append(self.z_vals[0], self.cash_vals[0] - current_cash)), name=t
+            ),
+            value,
+        )
 
 
 class NaivePolicy(TradingPolicy):
-    def __init__(self, experiment: ExperimentInfo):
-        super().__init__(experiment)
+    def __init__(self, experiment: ExperimentInfo, verbose=True, **kwargs):
+        super().__init__(experiment, verbose, **kwargs)
         self.initial = True
+        self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.trading_cost
 
     def get_trades(self, portfolio, t):
         if not self.initial:
-            return pd.Series(index=portfolio.index, data=0, name=t)
+            return (
+                pd.Series(index=portfolio.index, data=0, name=t),
+                self.known_dict[t] @ portfolio[:-1] + portfolio[-1],
+            )
         self.initial = False
 
         env = gp.Env(empty=True)
@@ -159,11 +169,7 @@ class NaivePolicy(TradingPolicy):
         assert value > 0.0
         previous_time_string = self.known_dict[t].name.strftime("%Y-%m-%d")
         self.vprint(f"Current Portfolio Value at {previous_time_string}: {value}")
-        # prob_arr = []
-        # z_arr = []
-        # cash_arr = []
-        # p_arr = []
-        # y_arr = []
+
         F = self.F
         M = value * 1e3
 
@@ -196,8 +202,6 @@ class NaivePolicy(TradingPolicy):
         m.addConstr(p_next >= 0)
 
         obj = prices @ p_next - F @ y_sell - F @ y_buy
-        cash = cash_next
-        p = p_next
 
         final_p = self.exp.final_portfolio.values[:-1]
         # Terminal constraint.
@@ -213,9 +217,11 @@ class NaivePolicy(TradingPolicy):
         t1 = time()
         m.optimize()
         t2 = time()
-        self.vprint(f"\t Optimized. Time taken: {t2 - t1}", )
-        try : 
-            self.z = z_buy.getValue() - z_sell.getValue()
+        self.vprint(
+            f"\t Optimized. Time taken: {t2 - t1}",
+        )
+        try:
+            self.z = (z_buy - z_sell).getValue()
             self.cash_next = cash_next.getValue()
             self.p_next = p_next.getValue()
         except Exception as e:
@@ -323,7 +329,9 @@ class RigidDayTrading(TradingPolicy):
         t1 = time()
         m.optimize()
         t2 = time()
-        self.vprint(f"\t Optimized. Time taken: {t2 - t1}", )
+        self.vprint(
+            f"\t Optimized. Time taken: {t2 - t1}",
+        )
         try:
             self.z_vals = {}
             self.y_vals = {}
@@ -335,8 +343,9 @@ class RigidDayTrading(TradingPolicy):
                 if i == 0:
                     self.value_dictionary[time_step] = value
                 else:
-                    self.value_dictionary[time_step] = p_arr[i - 1].getValue() @ self.known_dict[time_step] + cash_arr[
-                        i - 1].getValue()
+                    self.value_dictionary[time_step] = (
+                        p_arr[i - 1].getValue() @ self.known_dict[time_step] + cash_arr[i - 1].getValue()
+                    )
                 self.cash_vals[time_step] = cash_arr[i].getValue()
             self.p_vals = [p.getValue() for p in p_arr]
         except Exception as e:
@@ -457,19 +466,21 @@ class MultiSimRunner:
                 simulator = MarketSimulator(experiment, policy_instance, verbose=False)
                 simulator.run()
                 self.simulators[(experiment.exp_id, policy)] = simulator
-                result_list.append({
-                    "experiment": experiment.exp_id,
-                    "policy": policy,
-                    "Gain": simulator.evaluate_gain(),
-                    "Final Value": simulator.portfolio_value[-1],
-                    "Initial Value": simulator.portfolio_value[0],
-                    "num_stocks": experiment.num_stocks,
-                    "pct_variance": experiment.pct_variance,
-                    "initial_budget": experiment.budget,
-                    "trading_cost": experiment.trading_cost,
-                    "average_error": experiment.average_error,
-                    "status": simulator.status
-                })
+                result_list.append(
+                    {
+                        "experiment": experiment.exp_id,
+                        "policy": policy,
+                        "Gain": simulator.evaluate_gain(),
+                        "Final Value": simulator.portfolio_value[-1],
+                        "Initial Value": simulator.portfolio_value[0],
+                        "num_stocks": experiment.num_stocks,
+                        "pct_variance": experiment.pct_variance,
+                        "initial_budget": experiment.budget,
+                        "trading_cost": experiment.trading_cost,
+                        "average_error": experiment.average_error,
+                        "status": simulator.status,
+                    }
+                )
                 gc.collect()
         self.results = pd.DataFrame(result_list)
 
