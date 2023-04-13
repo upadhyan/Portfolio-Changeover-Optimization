@@ -147,6 +147,85 @@ class NaivePolicy(TradingPolicy):
             return pd.Series(index=portfolio.index, data=0, name=t)
         self.initial = False
 
+        env = gp.Env(empty=True)
+        env.setParam("OutputFlag", False)
+        # env.setParam("TimeLimit",time_limit)
+        env.start()
+        #######################
+        p = portfolio.values[:-1]  # portfolio of number of positions
+        cash = portfolio.values[-1]  # cash amount
+
+        value = self.known_dict[t] @ p + cash
+        assert value > 0.0
+        previous_time_string = self.known_dict[t].name.strftime("%Y-%m-%d")
+        self.vprint(f"Current Portfolio Value at {previous_time_string}: {value}")
+        # prob_arr = []
+        # z_arr = []
+        # cash_arr = []
+        # p_arr = []
+        # y_arr = []
+        F = self.F
+        M = value * 1e3
+
+        trading_information = pd.concat([pd.DataFrame(self.known_dict[t]).T, self.price_dict[t]])
+        m = gp.Model(env=env)
+
+        prices = self.known_dict[t].values
+        # prices = trading_information.loc[time_step].values
+
+        z_buy = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
+        z_sell = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
+        y_sell = m.addMVar(p.shape, vtype=GRB.BINARY)
+        y_buy = m.addMVar(p.shape, vtype=GRB.BINARY)
+
+        # Next Portfolio
+        p_next = p + z_buy - z_sell
+        cash_next = prices @ (z_sell - z_buy) - F @ y_sell - F @ y_buy + cash
+
+        ## Trading fees
+        ### if we sell a stock, we pay a trading price
+        m.addConstr(M * (y_sell) >= z_sell)
+
+        ## If we buy a stock, we pay a trading fee
+        m.addConstr(M * (y_buy) >= z_buy)
+
+        ## No borrowing
+        m.addConstr(cash_next >= 0)
+
+        ## No shorting
+        m.addConstr(p_next >= 0)
+
+        obj = prices @ p_next - F @ y_sell - F @ y_buy
+        cash = cash_next
+        p = p_next
+
+        final_p = self.exp.final_portfolio.values[:-1]
+        # Terminal constraint.
+        m.addConstr(p_next >= final_p)
+
+        m.setObjective(obj, GRB.MAXIMIZE)
+        m.update()
+        # get model constraints
+        # self.vprint(
+        #     f"\t Optimizing with {n_timesteps} time steps, "
+        #     f"{len(m.getConstrs())} constraints, and {len(m.getVars())} variables..."
+        # )
+        t1 = time()
+        m.optimize()
+        t2 = time()
+        self.vprint(f"\t Optimized. Time taken: {t2 - t1}", )
+        try : 
+            self.z = z_buy.getValue() - z_sell.getValue()
+            self.cash_next = cash_next.getValue()
+            self.p_next = p_next.getValue()
+        except Exception as e:
+            self.vprint(e)
+        assert (self.p_next >= 0).all()
+        del m
+        del env
+        gc.collect()
+        return pd.Series(index=portfolio.index, data=(np.append(self.z, self.cash_next - cash)), name=t), value
+
 
 class RigidDayTrading(TradingPolicy):
     def __init__(self, experiment: ExperimentInfo, verbose=True, **kwargs):
