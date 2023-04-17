@@ -252,11 +252,12 @@ def generate_experiments(stock_price_df, covariates, num_experiments, output_dir
                         pickle.dump(experiment, f)
                     average_errors.append(experiment.average_error)
                     pbar.set_description(f"Experiment {i} saved to {f_name}. Error is {experiment.average_error}")
+                    del experiment
+                    gc.collect()
                 else:
                     pbar.set_description(f"Retrying experiment {i}. Error is {experiment.average_error}")
             except ExperimentGenerationError as e:
                 pbar.set_description(f"Experiment {i} failed with error {e}.")
-        gc.collect()
     print(f"Average error is {np.mean(average_errors)}")
 
 
