@@ -48,112 +48,6 @@ class TradingPolicy(ABC):
             print(print_statement)
 
 
-class DayTradingPolicy(TradingPolicy):
-    def __init__(self, experiment: ExperimentInfo, verbose=True, **kwargs):
-        super().__init__(experiment, verbose, **kwargs)
-        self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.trading_cost
-
-    def get_trades(self, portfolio, t):
-        env = gp.Env(empty=True)
-        env.setParam("OutputFlag", False)
-        env.setParam("TimeLimit", 300)
-        env.start()
-        #######################
-        p = portfolio.values[:-1]  # portfolio of number of positions
-        current_cash = portfolio.values[-1]  # cash amount
-
-        value = self.known_dict[t] @ p + current_cash
-        assert value > 0.0
-        previous_time_string = self.known_dict[t].name.strftime("%Y-%m-%d")
-        self.vprint(f"Current Portfolio Value at {previous_time_string}: {value}")
-        prob_arr = []
-        z_arr = []
-        cash_arr = []
-        p_arr = []
-
-        F = self.F
-        M = value * 1e3
-
-        trading_information = pd.concat([pd.DataFrame(self.known_dict[t]).T, self.price_dict[t]])
-        p_next = None
-        m = gp.Model(env=env)
-        n_timesteps = len(trading_information.index)
-        cash = current_cash
-        for time_step in trading_information.index:
-            prices = trading_information.loc[time_step].values
-
-            z_buy = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
-            z_sell = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
-            y_sell = m.addMVar(p.shape, vtype=GRB.BINARY)
-            y_buy = m.addMVar(p.shape, vtype=GRB.BINARY)
-
-            # Next Portfolio
-            p_next = p + z_buy - z_sell
-            cash_next = prices @ (z_sell - z_buy) - F @ y_sell - F @ y_buy + cash
-
-            ## Trading fees
-            ### if we sell a stock, we pay a trading price
-            m.addConstr(M * (y_sell) >= z_sell)
-
-            ## If we buy a stock, we pay a trading fee
-            m.addConstr(M * (y_buy) >= z_buy)
-
-            ## No borrowing
-            m.addConstr(cash_next >= 0)
-
-            ## No shorting
-            m.addConstr(p_next >= 0)
-
-            prob_arr.append(prices @ p_next - F @ y_sell - F @ y_buy)
-            cash = cash_next
-            p = p_next
-
-            z_arr.append(z_buy - z_sell)
-            cash_arr.append(cash_next)
-            p_arr.append(p_next)
-
-        final_p = self.exp.final_portfolio.values[:-1]
-        # Terminal constraint.
-        m.addConstr(p_next >= final_p)
-
-        # Combine all time instances
-        obj = sum(prob_arr)
-
-        m.setObjective(obj, GRB.MAXIMIZE)
-        m.update()
-        # get model constraints
-        self.vprint(
-            f"\t Optimizing with {n_timesteps} time steps, "
-            f"{len(m.getConstrs())} constraints, and {len(m.getVars())} variables..."
-        )
-        t1 = time()
-        m.optimize()
-        t2 = time()
-        self.vprint(
-            f"\t Optimized. Time taken: {t2 - t1}",
-        )
-        try:
-            self.p_vals = [p.getValue() for p in p_arr]
-            self.cash_vals = [_cash.getValue() for _cash in cash_arr]
-            self.z_vals = [z.getValue() for z in z_arr]
-        except Exception as e:
-            self.vprint(e)
-            return (
-                pd.Series(index=portfolio.index, data=0, name=t),
-                self.known_dict[t] @ portfolio[:-1] + portfolio[-1],
-            )
-        assert (np.round(self.p_vals[0]) >= 0).all()
-        del m
-        del env
-        gc.collect()
-        return (
-            pd.Series(
-                index=portfolio.index, data=(np.append(self.z_vals[0], self.cash_vals[0] - current_cash)), name=t
-            ),
-            value,
-        )
-
-
 class DirectionalTradingPolicy(TradingPolicy):
     def __init__(self, experiment: ExperimentInfo, verbose=True, **kwargs):
         super().__init__(experiment, verbose, **kwargs)
@@ -220,7 +114,7 @@ class DirectionalTradingPolicy(TradingPolicy):
             ## No shorting
             m.addConstr(p_next >= 0)
 
-            prob_arr.append(prices @ p_next - F @ y_sell - F @ y_buy)
+            prob_arr.append(- F @ y_sell - F @ y_buy)
             cash = cash_next
             p = p_next
 
@@ -555,7 +449,7 @@ class RigidDayTrading(TradingPolicy):
             ## No shorting
             m.addConstr(p_next >= 0)
 
-            prob_arr.append(prices @ p_next - F @ y_sell - F @ y_buy)
+            prob_arr.append(- F @ y_sell - F @ y_buy)
             cash = cash_next
             p = p_next
 
@@ -625,6 +519,7 @@ class MarketSimulator:
         self.current_portfolio = None
         self.historical_portfolios = []
         self.total_trading_cost = 0
+        self.total_trades = 0
 
     def run(self):
         self.status = "Running"
@@ -643,8 +538,9 @@ class MarketSimulator:
             t1 = time()
             trades, value = self.policy.get_trades(portfolio, t)
             asset_trades = trades[:-1]
-            self.total_trading_cost = trading_cost_incurred = ((np.round(
+            self.total_trading_cost += ((np.round(
                 asset_trades) != 0) * 1).sum() * self.configuration.trading_cost
+            self.total_trades += (np.round(asset_trades) != 0).sum()
             t2 = time()
             self.solve_times.append(t2 - t1)
             # Save Trades
@@ -718,8 +614,7 @@ DIRECTIONAL_TRADING = "Directional"
 
 
 def DIRECTIONAL_INCENTIVE_TRADING(lambda_=0.5):
-    assert lambda_ >= 0 and lambda_ <= 1
-    return f"DirectionalIncentive_{lambda_ * 10}"
+    return f"DirectionalIncentive_{lambda_ * 100}"
 
 
 class MultiSimRunner:
@@ -740,16 +635,78 @@ class MultiSimRunner:
             with open(f"{self.experiments_directory}/{experiment}", 'rb') as f:
                 exp = pickle.load(f)
             for policy in self.policies:
+                penalty = None
                 if policy == "RigidDayTrading":
                     policy_instance = RigidDayTrading(exp, verbose=False)
                 elif policy == "DayTrading":
-                    policy_instance = DayTradingPolicy(exp, verbose=False)
+                    policy = DIRECTIONAL_INCENTIVE_TRADING(0)
+                    policy_instance = DirectionalIncentiveTradingPolicy(exp, lambda_=0, verbose=False)
+                    penalty = 0
                 elif policy == "Naive":
                     policy_instance = NaivePolicy(exp, verbose=False)
                 elif policy == "Directional":
                     policy_instance = DirectionalTradingPolicy(exp, verbose=False)
-                elif policy.contains("DirectionalIncentive"):
-                    lambda_ = float(policy.split("_")[1]) / 10
+                elif "DirectionalIncentive" in policy:
+                    lambda_ = float(policy.split("_")[1]) / 100
+                    policy_instance = DirectionalIncentiveTradingPolicy(exp, lambda_=lambda_, verbose=False)
+                    penalty = lambda_
+                else:
+                    raise Exception("Policy not found")
+                pbar.set_description(f"Running {policy} on {exp.exp_id}")
+                t1 = time()
+                simulator = MarketSimulator(exp, policy_instance, verbose=False)
+                final_portfolio = simulator.run()
+                t2 = time()
+                pbar.set_description(f"Finished Running {policy} on {exp.exp_id}")
+                self.simulators[(exp.exp_id, policy)] = simulator
+                result_list.append({
+                    "experiment": exp.exp_id,
+                    "policy": policy,
+                    "Gain": simulator.evaluate_gain(),
+                    "Final Value": simulator.portfolio_value[-1],
+                    "Initial Value": simulator.portfolio_value[0],
+                    "num_stocks": exp.num_stocks,
+                    "pct_variance": exp.pct_variance,
+                    "initial_budget": exp.budget,
+                    "trading_fee": exp.trading_cost,
+                    "average_error": exp.average_error,
+                    "status": simulator.status,
+                    "runtime": t2 - t1,
+                    "leftover_cash": final_portfolio[-1],
+                    "penalty": penalty,
+                    "total_trades": simulator.total_trades,
+                    "total_trading_costs": simulator.total_trading_cost
+                })
+                gc.collect()
+                if save_file is not None:
+                    self.results = pd.DataFrame(result_list)
+                    self.results.to_csv(save_file)
+            del exp
+            gc.collect()
+        self.results = pd.DataFrame(result_list)
+
+    def get_results(self, save_file=None):
+        self.run(save_file=save_file)
+        return self.results
+
+    def run_specific(self, experiment_list):
+        result_list = []
+        pbar = tqdm(experiment_list)
+        for exp in pbar:
+            for policy in self.policies:
+                penalty = None
+                if policy == "RigidDayTrading":
+                    policy_instance = RigidDayTrading(exp, verbose=False)
+                elif policy == "DayTrading":
+                    policy = DIRECTIONAL_INCENTIVE_TRADING(0)
+                    policy_instance = DirectionalIncentiveTradingPolicy(exp, lambda_=0, verbose=False)
+                elif policy == "Naive":
+                    policy_instance = NaivePolicy(exp, verbose=False)
+                elif policy == "Directional":
+                    policy_instance = DirectionalTradingPolicy(exp, verbose=False)
+                elif "DirectionalIncentive" in policy:
+                    lambda_ = float(policy.split("_")[1]) / 100
+                    penalty = lambda_
                     policy_instance = DirectionalIncentiveTradingPolicy(exp, lambda_=lambda_, verbose=False)
                 else:
                     raise Exception("Policy not found")
@@ -773,16 +730,10 @@ class MultiSimRunner:
                     "average_error": exp.average_error,
                     "status": simulator.status,
                     "runtime": t2 - t1,
-                    "leftover_cash": final_portfolio[-1]
+                    "leftover_cash": final_portfolio[-1],
+                    "penalty": penalty,
+                    "total_trades": simulator.total_trades,
+                    "total_trading_costs": simulator.total_trading_cost
                 })
                 gc.collect()
-                if save_file is not None:
-                    self.results = pd.DataFrame(result_list)
-                    self.results.to_csv(save_file)
-            del exp
-            gc.collect()
-        self.results = pd.DataFrame(result_list)
-
-    def get_results(self, save_file=None):
-        self.run(save_file=save_file)
-        return self.results
+        return pd.DataFrame(result_list)
