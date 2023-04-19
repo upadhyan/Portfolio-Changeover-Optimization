@@ -79,13 +79,17 @@ class DirectionalTradingPolicy(TradingPolicy):
 
         buy_constraint = (difference >= 0) * 1
         F = self.F
-        M = value * 1e3
 
         trading_information = pd.concat([pd.DataFrame(self.known_dict[t]).T, self.price_dict[t]])
+        returns = trading_information.pct_change().fillna(0) + 1
+
+        port_value_bounds = value * returns.max(axis=1).cumprod()
+
         p_next = None
         m = gp.Model(env=env)
         n_timesteps = len(trading_information.index)
         cash = current_cash
+
         for time_step in trading_information.index:
             prices = trading_information.loc[time_step].values
 
@@ -95,6 +99,8 @@ class DirectionalTradingPolicy(TradingPolicy):
             y_buy = m.addMVar(p.shape, vtype=GRB.BINARY)
 
             ## Directional Constraints
+            bound_at_time = port_value_bounds.loc[time_step]
+            M = np.ceil(bound_at_time / prices)
             m.addConstr(z_buy <= buy_constraint.values * M)
             m.addConstr(z_sell <= (1 - buy_constraint.values) * M)
             # Next Portfolio
@@ -103,10 +109,10 @@ class DirectionalTradingPolicy(TradingPolicy):
 
             ## Trading fees
             ### if we sell a stock, we pay a trading price
-            m.addConstr(M * (y_sell) >= z_sell)
+            m.addConstr(M * y_sell >= z_sell)
 
             ## If we buy a stock, we pay a trading fee
-            m.addConstr(M * (y_buy) >= z_buy)
+            m.addConstr(M * y_buy >= z_buy)
 
             ## No borrowing
             m.addConstr(cash_next >= 0)
@@ -200,6 +206,9 @@ class DirectionalIncentiveTradingPolicy(TradingPolicy):
         M = value * 1e3
 
         trading_information = pd.concat([pd.DataFrame(self.known_dict[t]).T, self.price_dict[t]])
+        returns = trading_information.pct_change().fillna(0) + 1
+
+        port_value_bounds = value * returns.max(axis=1).cumprod()
         p_next = None
         m = gp.Model(env=env)
         n_timesteps = len(trading_information.index)
@@ -216,12 +225,14 @@ class DirectionalIncentiveTradingPolicy(TradingPolicy):
             p_next = p + z_buy - z_sell
             cash_next = prices @ (z_sell - z_buy) - F @ y_sell - F @ y_buy + cash
 
+            bound_at_time = port_value_bounds.loc[time_step]
+            M = np.ceil(bound_at_time / prices)
             ## Trading fees
             ### if we sell a stock, we pay a trading price
-            m.addConstr(M * (y_sell) >= z_sell)
+            m.addConstr(M * y_sell >= z_sell)
 
             ## If we buy a stock, we pay a trading fee
-            m.addConstr(M * (y_buy) >= z_buy)
+            m.addConstr(M * y_buy >= z_buy)
 
             ## No borrowing
             m.addConstr(cash_next >= 0)
@@ -329,13 +340,14 @@ class NaivePolicy(TradingPolicy):
         # Next Portfolio
         p_next = p + z_buy - z_sell
         cash_next = prices @ (z_sell - z_buy) - F @ y_sell - F @ y_buy + cash
-
+        M_buy = np.ceil(value / prices)
+        M_sell = p
         ## Trading fees
         ### if we sell a stock, we pay a trading price
-        m.addConstr(M * (y_sell) >= z_sell)
+        m.addConstr(M_sell * y_sell >= z_sell)
 
         ## If we buy a stock, we pay a trading fee
-        m.addConstr(M * (y_buy) >= z_buy)
+        m.addConstr(M_buy * y_buy >= z_buy)
 
         ## No borrowing
         m.addConstr(cash_next >= 0)
