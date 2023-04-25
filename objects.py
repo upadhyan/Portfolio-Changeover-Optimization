@@ -101,8 +101,12 @@ class DirectionalTradingPolicy(TradingPolicy):
             ## Directional Constraints
             bound_at_time = port_value_bounds.loc[time_step]
             M = np.ceil(bound_at_time / prices)
-            m.addConstr(z_buy <= buy_constraint.values * M)
-            m.addConstr(z_sell <= (1 - buy_constraint.values) * M)
+            # m.addConstr(z_buy <= buy_constraint.values * M)
+            # m.addConstr(z_sell <= (1 - buy_constraint.values) * M)
+            m.addConstr(y_buy <= buy_constraint.values)
+            m.addConstr(y_sell <= (1 - buy_constraint.values))
+
+
             # Next Portfolio
             p_next = p + z_buy - z_sell
             cash_next = prices @ (z_sell - z_buy) - F @ y_sell - F @ y_buy + cash
@@ -172,7 +176,7 @@ class DirectionalTradingPolicy(TradingPolicy):
         )
 
 
-class DirectionalIncentiveTradingPolicy(TradingPolicy):
+class DirectionalPenaltyTradingPolicy(TradingPolicy):
     def __init__(self, experiment: ExperimentInfo, verbose=True, lambda_=0.5, **kwargs):
         super().__init__(experiment, verbose, **kwargs)
         self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.trading_cost
@@ -235,6 +239,9 @@ class DirectionalIncentiveTradingPolicy(TradingPolicy):
 
             ## If we buy a stock, we pay a trading fee
             m.addConstr(M * y_buy >= z_buy)
+
+            ## Valid Inequality
+            m.addConstr(y_sell + y_buy <= 1)
 
             ## No borrowing
             m.addConstr(cash_next >= 0)
@@ -509,7 +516,7 @@ def RIGID_INCENTIVE_TRADING(lambda_=0.5):
 
 
 def DIRECTIONAL_INCENTIVE_TRADING(lambda_=0.5):
-    return f"DirectionalIncentive_{lambda_ * 100}"
+    return f"DirP_{lambda_ * 100}"
 
 
 
@@ -528,17 +535,11 @@ class MultiSimRunner:
 
     def get_policy(self, policy, exp):
         penalty = None
-        if "RigidIncentive" in policy:
-            lambda_ = float(policy.split("_")[1]) / 100
-            policy_instance = RigidDirectionalIncentivePolicy(exp, lambda_=lambda_, verbose=False)
-            penalty = lambda_
-        elif policy == "RigidDirectional":
-            policy_instance = RigidDirectionalPolicy(exp, verbose=False)
-        elif policy == "Naive":
+        if policy == "Naive":
             policy_instance = NaivePolicy(exp, verbose=False)
-        elif "DirectionalIncentive" in policy:
+        elif "DirP" in policy:
             lambda_ = float(policy.split("_")[1]) / 100
-            policy_instance = DirectionalIncentiveTradingPolicy(exp, lambda_=lambda_, verbose=False)
+            policy_instance = DirectionalPenaltyTradingPolicy(exp, lambda_=lambda_, verbose=False)
             penalty = lambda_
         elif policy == "Directional":
             policy_instance = DirectionalTradingPolicy(exp, verbose=False)
