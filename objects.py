@@ -9,6 +9,7 @@ from experimental_config import *
 from time import time
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import itertools
 
 
 class TradingPolicy(ABC):
@@ -225,7 +226,7 @@ class ColumnGeneration(TradingPolicy):
         m = gp.Model(env=env)
         n_timesteps = len(trading_information.index)
         cash = current_cash
-        enumerations = self.get_possible_enumerations(portfolio, t)
+        enumerations = self.get_possible_enumerations(portfolio, trading_information, returns, t)
 
 
         for time_step in trading_information.index:
@@ -320,12 +321,42 @@ class ColumnGeneration(TradingPolicy):
             ),
             value,
         )
-    def get_possible_enumerations(self, portfolio, t):
-        """
-        Returns a list of possible enumerations of the portfolio at time t
-        """
+    def get_possible_enumerations(self, portfolio, trading_information, returns, t):
+    
         # Get the current portfolio
         p = portfolio.values[:-1]
+        current_cash = portfolio.values[-1]
+        p_final = self.exp.final_portfolio.values[:-1]
+        # prices = trading_information.loc[time_step].values
+
+        p_diff = p_final - p
+        p_sell = np.where(p_diff < 0, 1, 0)
+        p_buy = np.where(p_diff > 0, 1, 0)   
+
+        B = []
+        iter_combinations = self.get_combinations(p_buy, t) 
+        for c in iter_combinations:
+            new_c = tuple(np.zeros(t) if type(item_) == np.float64 else item_ for item_ in c)
+            B.append(pd.DataFrame(new_c))
+        
+        S = []
+        iter_combinations = self.get_combinations(p_sell, t)
+        for c in iter_combinations:
+            new_c = tuple(np.zeros(t) if type(item_) == np.float64 else item_ for item_ in c)
+            S.append(pd.DataFrame(new_c))
+
+        return B, S
+        
+    def get_combinations(self, p, t):
+        relevant_matrices = [np.zeros(t) if i == 0 else np.identity(t) for i in p]
+        combinations = []
+        for i, vec in enumerate(p):
+            if vec == 0:
+                combinations.append(np.zeros(t))
+            else:
+                asset_comb = [relevant_matrices[i][j] for j in range(t)] + [np.zeros(t)]
+        combinations.append(asset_comb)
+        iter_combinations = itertools.product(*combinations)
 
 
 
