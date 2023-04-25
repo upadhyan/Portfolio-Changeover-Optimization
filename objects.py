@@ -133,7 +133,7 @@ class DirectionalTradingPolicy(TradingPolicy):
             ## No shorting
             m.addConstr(p_next >= 0)
 
-            prob_arr.append(- F @ y_sell - F @ y_buy)
+            prob_arr.append(-F @ y_sell - F @ y_buy)
             cash = cash_next
             p = p_next
 
@@ -228,8 +228,7 @@ class ColumnGeneration(TradingPolicy):
         cash = current_cash
         buy_enumerations, sell_enumerations = self.get_possible_enumerations(portfolio, t)
 
-
-        for time_step in trading_information.index:
+        for i, time_step in enumerate(trading_information.index):
             prices = trading_information.loc[time_step].values
 
             z_buy = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
@@ -241,18 +240,16 @@ class ColumnGeneration(TradingPolicy):
             m.addConstr(sum(lambda_sell) == 1)
             m.addConstr(sum(lambda_buy) == 1)
 
-            vectors_buy = [possible_solution.loc[time_step] for possible_solution in buy_enumerations]
-            vectors_sell = [possible_solution.loc[time_step] for possible_solution in sell_enumerations]
+            vectors_buy = [possible_solution[i] for possible_solution in buy_enumerations]
+            vectors_sell = [possible_solution[i] for possible_solution in sell_enumerations]
             y_buy = lambda_buy @ vectors_buy
             y_sell = lambda_sell @ vectors_sell
-
 
             ## Directional Constraints
             bound_at_time = port_value_bounds.loc[time_step]
             M = np.ceil(bound_at_time / prices)
             m.addConstr(y_buy <= buy_constraint.values)
             m.addConstr(y_sell <= (1 - buy_constraint.values))
-
 
             # Next Portfolio
             p_next = p + z_buy - z_sell
@@ -271,7 +268,7 @@ class ColumnGeneration(TradingPolicy):
             ## No shorting
             m.addConstr(p_next >= 0)
 
-            prob_arr.append(- F @ y_sell - F @ y_buy)
+            prob_arr.append(-F @ y_sell - F @ y_buy)
             cash = cash_next
             p = p_next
 
@@ -321,8 +318,8 @@ class ColumnGeneration(TradingPolicy):
             ),
             value,
         )
+
     def get_possible_enumerations(self, portfolio, trading_information, returns, t):
-    
         # Get the current portfolio
         p = portfolio.values[:-1]
         current_cash = portfolio.values[-1]
@@ -331,22 +328,22 @@ class ColumnGeneration(TradingPolicy):
 
         p_diff = p_final - p
         p_sell = np.where(p_diff < 0, 1, 0)
-        p_buy = np.where(p_diff > 0, 1, 0)   
+        p_buy = np.where(p_diff > 0, 1, 0)
 
         B = []
-        iter_combinations = self.get_combinations(p_buy, t) 
+        iter_combinations = self.get_combinations(p_buy, t)
         for c in iter_combinations:
             new_c = tuple(np.zeros(t) if type(item_) == np.float64 else item_ for item_ in c)
-            B.append(pd.DataFrame(new_c))
-        
+            B.append(np.array(new_c))
+
         S = []
         iter_combinations = self.get_combinations(p_sell, t)
         for c in iter_combinations:
             new_c = tuple(np.zeros(t) if type(item_) == np.float64 else item_ for item_ in c)
-            S.append(pd.DataFrame(new_c))
+            S.append(np.array(new_c))
 
         return B, S
-        
+
     def get_combinations(self, p, t):
         relevant_matrices = [np.zeros(t) if i == 0 else np.identity(t) for i in p]
         combinations = []
@@ -357,7 +354,7 @@ class ColumnGeneration(TradingPolicy):
                 asset_comb = [relevant_matrices[i][j] for j in range(t)] + [np.zeros(t)]
         combinations.append(asset_comb)
         iter_combinations = itertools.product(*combinations)
-
+        return iter_combinations
 
 
 class DirectionalPenaltyTradingPolicy(TradingPolicy):
@@ -440,7 +437,7 @@ class DirectionalPenaltyTradingPolicy(TradingPolicy):
 
             sell_penalty = (self.lambda_ * buy_constraint.values * prices) @ z_sell
             buy_penalty = (self.lambda_ * (1 - buy_constraint.values) * prices) @ z_buy
-            prob_arr.append(- F @ y_sell - F @ y_buy - sell_penalty - buy_penalty)
+            prob_arr.append(-F @ y_sell - F @ y_buy - sell_penalty - buy_penalty)
             cash = cash_next
             p = p_next
 
@@ -585,7 +582,6 @@ class NaivePolicy(TradingPolicy):
         return pd.Series(index=portfolio.index, data=(np.append(self.z, self.cash_next - cash)), name=t), value
 
 
-
 class MarketSimulator:
     def __init__(self, experiment: ExperimentInfo, policy: TradingPolicy, verbose=True):
         self.configuration = experiment
@@ -621,8 +617,7 @@ class MarketSimulator:
             t1 = time()
             trades, value = self.policy.get_trades(portfolio, t)
             asset_trades = trades[:-1]
-            self.total_trading_cost += ((np.round(
-                asset_trades) != 0) * 1).sum() * self.configuration.trading_cost
+            self.total_trading_cost += ((np.round(asset_trades) != 0) * 1).sum() * self.configuration.trading_cost
             self.total_trades += (np.round(asset_trades) != 0).sum()
             t2 = time()
             self.solve_times.append(t2 - t1)
@@ -703,9 +698,6 @@ def DIRECTIONAL_INCENTIVE_TRADING(lambda_=0.5):
     return f"DirP_{lambda_ * 100}"
 
 
-
-
-
 class MultiSimRunner:
     def __init__(self, experiments_directory, policies, trim=None):
         self.experiments_directory = experiments_directory
@@ -749,14 +741,14 @@ class MultiSimRunner:
             "leftover_cash": final_portfolio[-1],
             "penalty": penalty,
             "total_trades": simulator.total_trades,
-            "total_trading_costs": simulator.total_trading_cost
+            "total_trading_costs": simulator.total_trading_cost,
         }
 
     def run(self, save_file=None):
         result_list = []
         pbar = tqdm(self.experiments)
         for experiment in pbar:
-            with open(f"{self.experiments_directory}/{experiment}", 'rb') as f:
+            with open(f"{self.experiments_directory}/{experiment}", "rb") as f:
                 exp = pickle.load(f)
             for policy in self.policies:
                 policy_instance, penalty = self.get_policy(policy, exp)
@@ -768,7 +760,8 @@ class MultiSimRunner:
                 pbar.set_description(f"Finished Running {policy} on {exp.exp_id}")
                 self.simulators[(exp.exp_id, policy)] = simulator
                 result_list.append(
-                    self.provide_run_stats(exp, simulator, policy, result_list, t1, t2, final_portfolio, penalty))
+                    self.provide_run_stats(exp, simulator, policy, result_list, t1, t2, final_portfolio, penalty)
+                )
                 gc.collect()
                 if save_file is not None:
                     self.results = pd.DataFrame(result_list)
@@ -795,7 +788,7 @@ class MultiSimRunner:
                 pbar.set_description(f"Finished Running {policy} on {exp.exp_id}")
                 self.simulators[(exp.exp_id, policy)] = simulator
                 result_list.append(
-                    self.provide_run_stats(exp, simulator, policy, result_list, t1, t2, final_portfolio, penalty))
+                    self.provide_run_stats(exp, simulator, policy, result_list, t1, t2, final_portfolio, penalty)
+                )
                 gc.collect()
         return pd.DataFrame(result_list)
-
