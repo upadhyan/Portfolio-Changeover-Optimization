@@ -226,7 +226,7 @@ class ColumnGeneration(TradingPolicy):
         m = gp.Model(env=env)
         n_timesteps = len(trading_information.index)
         cash = current_cash
-        enumerations = self.get_possible_enumerations(portfolio, trading_information, returns, t)
+        buy_enumerations, sell_enumerations = self.get_possible_enumerations(portfolio, t)
 
 
         for time_step in trading_information.index:
@@ -234,28 +234,28 @@ class ColumnGeneration(TradingPolicy):
 
             z_buy = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
             z_sell = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
-            y_sell = m.addMVar(p.shape, vtype=GRB.BINARY)
-            y_buy = m.addMVar(p.shape, vtype=GRB.BINARY)
-            ## lambda_it_sell = admvar(L(## of choice), vtype = binary )
-            ## lambda_it_buy = admvar(L(## of choice), vtype = binary )
-            ## m.add constr (sum lambdas  == 1)
+            # y_sell = m.addMVar(p.shape, vtype=GRB.BINARY)
+            # y_buy = m.addMVar(p.shape, vtype=GRB.BINARY)
+            lambda_sell = m.addMVar(len(sell_enumerations), vtype=GRB.BINARY)
+            lambda_buy = m.addMVar(len(buy_enumerations), vtype=GRB.BINARY)
+            m.addConstr(sum(lambda_sell) == 1)
+            m.addConstr(sum(lambda_buy) == 1)
+
+            vectors_buy = [possible_solution.loc[time_step] for possible_solution in buy_enumerations]
+            vectors_sell = [possible_solution.loc[time_step] for possible_solution in sell_enumerations]
+            y_buy = lambda_buy @ vectors_buy
+            y_sell = lambda_sell @ vectors_sell
+
 
             ## Directional Constraints
             bound_at_time = port_value_bounds.loc[time_step]
             M = np.ceil(bound_at_time / prices)
-            # m.addConstr(z_buy <= buy_constraint.values * M)
-            # m.addConstr(z_sell <= (1 - buy_constraint.values) * M)
             m.addConstr(y_buy <= buy_constraint.values)
             m.addConstr(y_sell <= (1 - buy_constraint.values))
 
-            # pull relevant vectors
-            # vectors_buy = [buy_matrix[:,timestep] for matrix in buy_matrix_list]
-            # vectors_buy = [sell_matrix[:,timestep] for matrix in sell_matrix_list]
 
             # Next Portfolio
             p_next = p + z_buy - z_sell
-            # y_sell = lambda_it_sell^T @ vectors_sell
-            # y_buy = lambda_it_buy^T @ vectors_buy
             cash_next = prices @ (z_sell - z_buy) - F @ y_sell - F @ y_buy + cash
 
             ## Trading fees
