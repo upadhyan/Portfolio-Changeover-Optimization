@@ -89,7 +89,7 @@ class DirectionalTradingPolicy(TradingPolicy):
         m = gp.Model(env=env)
         n_timesteps = len(trading_information.index)
         cash = current_cash
-
+        ### Generate all possible trade matrices -> store it in a matrix list of size len(trading_info)
         for time_step in trading_information.index:
             prices = trading_information.loc[time_step].values
 
@@ -97,6 +97,9 @@ class DirectionalTradingPolicy(TradingPolicy):
             z_sell = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
             y_sell = m.addMVar(p.shape, vtype=GRB.BINARY)
             y_buy = m.addMVar(p.shape, vtype=GRB.BINARY)
+            ## lambda_it_sell = admvar(L(## of choice), vtype = binary )
+            ## lambda_it_buy = admvar(L(## of choice), vtype = binary )
+            ## m.add constr (sum lambdas  == 1)
 
             ## Directional Constraints
             bound_at_time = port_value_bounds.loc[time_step]
@@ -106,9 +109,14 @@ class DirectionalTradingPolicy(TradingPolicy):
             m.addConstr(y_buy <= buy_constraint.values)
             m.addConstr(y_sell <= (1 - buy_constraint.values))
 
+            # pull relevant vectors
+            # vectors_buy = [buy_matrix[:,timestep] for matrix in buy_matrix_list]
+            # vectors_buy = [sell_matrix[:,timestep] for matrix in sell_matrix_list]
 
             # Next Portfolio
             p_next = p + z_buy - z_sell
+            # y_sell = lambda_it_sell^T @ vectors_sell
+            # y_buy = lambda_it_buy^T @ vectors_buy
             cash_next = prices @ (z_sell - z_buy) - F @ y_sell - F @ y_buy + cash
 
             ## Trading fees
@@ -614,3 +622,4 @@ class MultiSimRunner:
                     self.provide_run_stats(exp, simulator, policy, result_list, t1, t2, final_portfolio, penalty))
                 gc.collect()
         return pd.DataFrame(result_list)
+
