@@ -225,7 +225,9 @@ class ColumnGeneration(TradingPolicy):
         m = gp.Model(env=env)
         n_timesteps = len(trading_information.index)
         cash = current_cash
-        ### Generate all possible trade matrices -> store it in a matrix list of size len(trading_info)
+        enumerations = self.get_possible_enumerations(portfolio, t)
+
+
         for time_step in trading_information.index:
             prices = trading_information.loc[time_step].values
 
@@ -318,6 +320,12 @@ class ColumnGeneration(TradingPolicy):
             ),
             value,
         )
+    def get_possible_enumerations(self, portfolio, t):
+        """
+        Returns a list of possible enumerations of the portfolio at time t
+        """
+        # Get the current portfolio
+        p = portfolio.values[:-1]
 
 
 
