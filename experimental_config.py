@@ -122,7 +122,7 @@ class ExperimentInfo:
         subset = subset.replace(0, np.nan)
         # Drop all columns with nans
         subset = subset.dropna(axis=1, how="any")
-        n = random.randint(20, 50)
+        n = 3
         # Choose n random stocks
         stocks = random.sample(subset.columns.tolist(), n)
         self.set_stocks(stocks)

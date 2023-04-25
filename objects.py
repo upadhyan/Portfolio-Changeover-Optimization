@@ -185,7 +185,7 @@ class DirectionalTradingPolicy(TradingPolicy):
         )
 
 
-class ColumnGeneration(TradingPolicy):
+class ColumnGenerationPolicy(TradingPolicy):
     def __init__(self, experiment: ExperimentInfo, verbose=True, **kwargs):
         super().__init__(experiment, verbose, **kwargs)
         self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.trading_cost
@@ -226,24 +226,24 @@ class ColumnGeneration(TradingPolicy):
         m = gp.Model(env=env)
         n_timesteps = len(trading_information.index)
         cash = current_cash
-        buy_enumerations, sell_enumerations = self.get_possible_enumerations(portfolio, t)
+        buy_enumerations = self.get_possible_enumerations(portfolio, t)
 
         for i, time_step in enumerate(trading_information.index):
             prices = trading_information.loc[time_step].values
 
             z_buy = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
             z_sell = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
-            # y_sell = m.addMVar(p.shape, vtype=GRB.BINARY)
+            y_sell = m.addMVar(p.shape, vtype=GRB.BINARY)
             # y_buy = m.addMVar(p.shape, vtype=GRB.BINARY)
-            lambda_sell = m.addMVar(len(sell_enumerations), vtype=GRB.BINARY)
-            lambda_buy = m.addMVar(len(buy_enumerations), vtype=GRB.BINARY)
-            m.addConstr(sum(lambda_sell) == 1)
+            #lambda_sell = m.addMVar(len(sell_enumerations), vtype=GRB.BINARY)
+            lambda_buy = m.addMVar((len(buy_enumerations),), vtype=GRB.BINARY)
+            #m.addConstr(sum(lambda_sell) == 1)
             m.addConstr(sum(lambda_buy) == 1)
 
             vectors_buy = [possible_solution[i] for possible_solution in buy_enumerations]
-            vectors_sell = [possible_solution[i] for possible_solution in sell_enumerations]
+            #vectors_sell = [possible_solution[i] for possible_solution in sell_enumerations]
             y_buy = lambda_buy @ vectors_buy
-            y_sell = lambda_sell @ vectors_sell
+            #y_sell = lambda_sell @ vectors_sell
 
             ## Directional Constraints
             bound_at_time = port_value_bounds.loc[time_step]
@@ -319,7 +319,7 @@ class ColumnGeneration(TradingPolicy):
             value,
         )
 
-    def get_possible_enumerations(self, portfolio, trading_information, returns, t):
+    def get_possible_enumerations(self, portfolio, trading_information):
         # Get the current portfolio
         p = portfolio.values[:-1]
         current_cash = portfolio.values[-1]
@@ -327,32 +327,22 @@ class ColumnGeneration(TradingPolicy):
         # prices = trading_information.loc[time_step].values
 
         p_diff = p_final - p
-        p_sell = np.where(p_diff < 0, 1, 0)
         p_buy = np.where(p_diff > 0, 1, 0)
-
         B = []
-        iter_combinations = self.get_combinations(p_buy, t)
+        iter_combinations = self.get_combinations(p_buy, len(trading_information.index))
         for c in iter_combinations:
-            new_c = tuple(np.zeros(t) if type(item_) == np.float64 else item_ for item_ in c)
-            B.append(np.array(new_c))
-
-        S = []
-        iter_combinations = self.get_combinations(p_sell, t)
-        for c in iter_combinations:
-            new_c = tuple(np.zeros(t) if type(item_) == np.float64 else item_ for item_ in c)
-            S.append(np.array(new_c))
-
-        return B, S
+            B.append(np.array(c))
+        return B
 
     def get_combinations(self, p, t):
         relevant_matrices = [np.zeros(t) if i == 0 else np.identity(t) for i in p]
         combinations = []
         for i, vec in enumerate(p):
             if vec == 0:
-                combinations.append(np.zeros(t))
+                asset_comb = [np.zeros(t)]
             else:
-                asset_comb = [relevant_matrices[i][j] for j in range(t)] + [np.zeros(t)]
-        combinations.append(asset_comb)
+                asset_comb = [relevant_matrices[i][j] for j in range(t)]
+            combinations.append(asset_comb)
         iter_combinations = itertools.product(*combinations)
         return iter_combinations
 
@@ -698,6 +688,9 @@ def DIRECTIONAL_INCENTIVE_TRADING(lambda_=0.5):
     return f"DirP_{lambda_ * 100}"
 
 
+COL_GEN = "ColGen"
+
+
 class MultiSimRunner:
     def __init__(self, experiments_directory, policies, trim=None):
         self.experiments_directory = experiments_directory
@@ -719,6 +712,8 @@ class MultiSimRunner:
             penalty = lambda_
         elif policy == "Directional":
             policy_instance = DirectionalTradingPolicy(exp, verbose=False)
+        elif policy == "ColGen":
+            policy_instance = ColumnGenerationPolicy(exp, verbose=False)
         else:
             raise ValueError("Policy not found")
         return policy_instance, penalty
