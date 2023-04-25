@@ -184,6 +184,143 @@ class DirectionalTradingPolicy(TradingPolicy):
         )
 
 
+class ColumnGeneration(TradingPolicy):
+    def __init__(self, experiment: ExperimentInfo, verbose=True, **kwargs):
+        super().__init__(experiment, verbose, **kwargs)
+        self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.trading_cost
+
+    def get_trades(self, portfolio, t):
+        env = gp.Env(empty=True)
+        env.setParam("OutputFlag", False)
+        env.setParam("TimeLimit", 300)
+        env.start()
+        #######################
+        p = portfolio.values[:-1]  # portfolio of number of positions
+        current_cash = portfolio.values[-1]  # cash amount
+
+        value = self.known_dict[t] @ p + current_cash
+        assert value > 0.0
+        previous_time_string = self.known_dict[t].name.strftime("%Y-%m-%d")
+        self.vprint(f"Current Portfolio Value at {previous_time_string}: {value}")
+        prob_arr = []
+        z_arr = []
+        cash_arr = []
+        p_arr = []
+
+        ## Direction Definition
+        initial_portfolio = self.exp.initial_portfolio.copy()[:-1]
+        final = self.exp.final_portfolio.copy()[:-1]
+
+        difference = final - initial_portfolio
+
+        buy_constraint = (difference >= 0) * 1
+        F = self.F
+
+        trading_information = pd.concat([pd.DataFrame(self.known_dict[t]).T, self.price_dict[t]])
+        returns = trading_information.pct_change().fillna(0) + 1
+
+        port_value_bounds = value * returns.max(axis=1).cumprod()
+
+        p_next = None
+        m = gp.Model(env=env)
+        n_timesteps = len(trading_information.index)
+        cash = current_cash
+        ### Generate all possible trade matrices -> store it in a matrix list of size len(trading_info)
+        for time_step in trading_information.index:
+            prices = trading_information.loc[time_step].values
+
+            z_buy = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
+            z_sell = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
+            y_sell = m.addMVar(p.shape, vtype=GRB.BINARY)
+            y_buy = m.addMVar(p.shape, vtype=GRB.BINARY)
+            ## lambda_it_sell = admvar(L(## of choice), vtype = binary )
+            ## lambda_it_buy = admvar(L(## of choice), vtype = binary )
+            ## m.add constr (sum lambdas  == 1)
+
+            ## Directional Constraints
+            bound_at_time = port_value_bounds.loc[time_step]
+            M = np.ceil(bound_at_time / prices)
+            # m.addConstr(z_buy <= buy_constraint.values * M)
+            # m.addConstr(z_sell <= (1 - buy_constraint.values) * M)
+            m.addConstr(y_buy <= buy_constraint.values)
+            m.addConstr(y_sell <= (1 - buy_constraint.values))
+
+            # pull relevant vectors
+            # vectors_buy = [buy_matrix[:,timestep] for matrix in buy_matrix_list]
+            # vectors_buy = [sell_matrix[:,timestep] for matrix in sell_matrix_list]
+
+            # Next Portfolio
+            p_next = p + z_buy - z_sell
+            # y_sell = lambda_it_sell^T @ vectors_sell
+            # y_buy = lambda_it_buy^T @ vectors_buy
+            cash_next = prices @ (z_sell - z_buy) - F @ y_sell - F @ y_buy + cash
+
+            ## Trading fees
+            ### if we sell a stock, we pay a trading price
+            m.addConstr(M * y_sell >= z_sell)
+
+            ## If we buy a stock, we pay a trading fee
+            m.addConstr(M * y_buy >= z_buy)
+
+            ## No borrowing
+            m.addConstr(cash_next >= 0)
+
+            ## No shorting
+            m.addConstr(p_next >= 0)
+
+            prob_arr.append(- F @ y_sell - F @ y_buy)
+            cash = cash_next
+            p = p_next
+
+            z_arr.append(z_buy - z_sell)
+            cash_arr.append(cash_next)
+            p_arr.append(p_next)
+
+        final_p = self.exp.final_portfolio.values[:-1]
+        # Terminal constraint.
+        m.addConstr(p_next >= final_p, name="terminal")
+
+        prob_arr.append(prices @ p_next + cash_next)
+
+        # Combine all time instances
+        obj = sum(prob_arr)
+
+        m.setObjective(obj, GRB.MAXIMIZE)
+        m.update()
+        # get model constraints
+        self.vprint(
+            f"\t Optimizing with {n_timesteps} time steps, "
+            f"{len(m.getConstrs())} constraints, and {len(m.getVars())} variables..."
+        )
+        t1 = time()
+        m.optimize()
+        t2 = time()
+        self.vprint(
+            f"\t Optimized. Time taken: {t2 - t1}",
+        )
+        try:
+            self.p_vals = [p.getValue() for p in p_arr]
+            self.cash_vals = [_cash.getValue() for _cash in cash_arr]
+            self.z_vals = [z.getValue() for z in z_arr]
+        except Exception as e:
+            self.vprint(e)
+            return (
+                pd.Series(index=portfolio.index, data=0, name=t),
+                self.known_dict[t] @ portfolio[:-1] + portfolio[-1],
+            )
+        assert (np.round(self.p_vals[0]) >= 0).all()
+        del m
+        del env
+        gc.collect()
+        return (
+            pd.Series(
+                index=portfolio.index, data=(np.append(self.z_vals[0], self.cash_vals[0] - current_cash)), name=t
+            ),
+            value,
+        )
+
+
+
 class DirectionalPenaltyTradingPolicy(TradingPolicy):
     def __init__(self, experiment: ExperimentInfo, verbose=True, lambda_=0.5, **kwargs):
         super().__init__(experiment, verbose, **kwargs)
