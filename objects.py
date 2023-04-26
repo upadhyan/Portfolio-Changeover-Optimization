@@ -701,15 +701,16 @@ RIGID = "RigidDirectional"
 DIRECTIONAL_TRADING = "Directional"
 
 
-def RIGID_INCENTIVE_TRADING(lambda_=0.5):
-    return f"RigidIncentive_{lambda_ * 100}"
 
 
 def DIRECTIONAL_INCENTIVE_TRADING(lambda_=0.5):
     return f"DirP_{lambda_ * 100}"
 
 
-COL_GEN = "ColGen"
+
+
+def COL_GEN(switch = True):
+    return f"ColGen_{switch}"
 
 
 class MultiSimRunner:
@@ -733,8 +734,9 @@ class MultiSimRunner:
             penalty = lambda_
         elif policy == "Directional":
             policy_instance = DirectionalTradingPolicy(exp, verbose=False)
-        elif policy == "ColGen":
-            policy_instance = ColumnGenerationPolicy(exp, verbose=False)
+        elif "ColGen" in policy:
+            switch = policy.split("_")[1] == "True"
+            policy_instance = ColumnGenerationPolicy(exp, sell_switch = switch, verbose=False)
         else:
             raise ValueError("Policy not found")
         return policy_instance, penalty
