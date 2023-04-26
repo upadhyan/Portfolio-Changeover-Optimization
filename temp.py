@@ -31,8 +31,8 @@ for e in experiment_names:
 
 # %%
 # policy = DirectionalPenaltyTradingPolicy(experiments[0], lambda_=0.5)
-policy = ColumnGenerationPolicy(experiments[2])
-simulator = MarketSimulator(experiments[2], policy, verbose=False)
+policy = ColumnGenerationPolicy(experiments[3])
+simulator = MarketSimulator(experiments[3], policy, verbose=False)
 simulator.run()
 simulator.total_trades
 print("")

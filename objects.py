@@ -186,9 +186,10 @@ class DirectionalTradingPolicy(TradingPolicy):
 
 
 class ColumnGenerationPolicy(TradingPolicy):
-    def __init__(self, experiment: ExperimentInfo, verbose=True, **kwargs):
+    def __init__(self, experiment: ExperimentInfo, verbose=True, sell_switch=True, **kwargs):
         super().__init__(experiment, verbose, **kwargs)
         self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.trading_cost
+        self.sell_switch = sell_switch
 
     def get_trades(self, portfolio, t):
         env = gp.Env(empty=True)
@@ -226,10 +227,13 @@ class ColumnGenerationPolicy(TradingPolicy):
         m = gp.Model(env=env)
         n_timesteps = len(trading_information.index)
         cash = current_cash
-        buy_enumerations = self.get_possible_enumerations(portfolio, trading_information)  # [LxNxT]
+        buy_enumerations = self.get_possible_enumerations(portfolio, trading_information, mode="buy")  # [LxNxT]
         lambda_buy = m.addMVar((buy_enumerations.shape[0],), vtype=GRB.BINARY)
-        # lambda_sell = m.addMVar(len(sell_enumerations), vtype=GRB.BINARY)
-        # m.addConstr(sum(lambda_sell) == 1)
+
+        if self.sell_switch:
+            sell_enumerations = self.get_possible_enumerations(portfolio, trading_information, mode="sell")  # [KxNxT]
+            lambda_sell = m.addMVar((sell_enumerations.shape[0]), vtype=GRB.BINARY)
+            m.addConstr(sum(lambda_sell) == 1)
         m.addConstr(sum(lambda_buy) == 1)
 
         for i, time_step in enumerate(trading_information.index):
@@ -237,14 +241,17 @@ class ColumnGenerationPolicy(TradingPolicy):
 
             z_buy = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
             z_sell = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
-            y_sell = m.addMVar(p.shape, vtype=GRB.BINARY)
+
+            if not self.sell_switch:
+                y_sell = m.addMVar(p.shape, vtype=GRB.BINARY)
             # y_buy = m.addMVar(p.shape, vtype=GRB.BINARY)
 
-            # vectors_buy = [possible_solution[i] for possible_solution in buy_enumerations]
             vectors_buy = buy_enumerations[:, :, i]  # [LxN]
-            # vectors_sell = [possible_solution[i] for possible_solution in sell_enumerations]
             y_buy = lambda_buy @ vectors_buy  # [1xL] @ [LxN] = [1xN]
-            # y_sell = lambda_sell @ vectors_sell
+
+            if self.sell_switch:
+                vectors_sell = sell_enumerations[:, :, i]  # [KxN]
+                y_sell = lambda_sell @ vectors_sell  # [1xK] @ [KxN] = [1xN]
 
             ## Directional Constraints
             bound_at_time = port_value_bounds.loc[time_step]
@@ -304,7 +311,10 @@ class ColumnGenerationPolicy(TradingPolicy):
             self.cash_vals = [_cash.getValue() for _cash in cash_arr]
             self.z_vals = [z.getValue() for z in z_arr]
             self.lambda_buy = np.argwhere(lambda_buy.X >= 1)
-            self.strat = buy_enumerations[self.lambda_buy, :, :]
+            self.strat_b = buy_enumerations[self.lambda_buy, :, :][0][0]
+            if self.sell_switch:
+                self.lambda_sell = np.argwhere(lambda_sell.X >= 1)
+                self.strat_s = sell_enumerations[self.lambda_sell, :, :][0][0]
         except Exception as e:
             self.vprint(e)
             return (
@@ -322,7 +332,7 @@ class ColumnGenerationPolicy(TradingPolicy):
             value,
         )
 
-    def get_possible_enumerations(self, portfolio, trading_information):
+    def get_possible_enumerations(self, portfolio, trading_information, mode="buy"):
         # Get the current portfolio
         p = portfolio.values[:-1]
         current_cash = portfolio.values[-1]
@@ -330,9 +340,12 @@ class ColumnGenerationPolicy(TradingPolicy):
         # prices = trading_information.loc[time_step].values
 
         p_diff = p_final - p
-        p_buy = np.where(p_diff > 0, 1, 0)
+        if mode == "buy":
+            p_tx = np.where(p_diff > 0, 1, 0)
+        if mode == "sell":
+            p_tx = np.where(p_diff < 0, 1, 0)
         B = []
-        iter_combinations = self.get_combinations(p_buy, len(trading_information.index))
+        iter_combinations = self.get_combinations(p_tx, len(trading_information.index))
 
         for c in iter_combinations:
             B.append(np.array(c))
