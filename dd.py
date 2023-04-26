@@ -2,11 +2,13 @@ import itertools
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+
 t = 30
 n = 3
 
 buy_set = np.random.choice([0, 1], size=n)
-relevant_matrices = [np.zeros((t,t)) if i == 0 else np.identity(t) for i in buy_set]
+relevant_matrices = [np.zeros((t, t)) if i == 0 else np.identity(t) for i in buy_set]
+print(len(relevant_matrices))
 combinations = []
 for i, vec in enumerate(buy_set):
     if vec != 0:
@@ -16,11 +18,13 @@ for i, vec in enumerate(buy_set):
     combinations.append(asset_comb)
 iter_combinations = itertools.product(*combinations)
 print("Buy Set: ", buy_set)
-#print(len(list(iter_combinations)))
+# print(len(list(iter_combinations)))
 
-for c in tqdm(iter_combinations):
-    print("---")
-    print(np.array(c))
+# for c in tqdm(iter_combinations):
+#     print("---")
+#     print(np.array(c))
+l = list(iter_combinations)
+print(len(l))
 
 # for c in iter_combinations:
 #     #print("---")

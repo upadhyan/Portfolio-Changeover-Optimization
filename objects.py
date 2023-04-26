@@ -226,7 +226,11 @@ class ColumnGenerationPolicy(TradingPolicy):
         m = gp.Model(env=env)
         n_timesteps = len(trading_information.index)
         cash = current_cash
-        buy_enumerations = self.get_possible_enumerations(portfolio, t)
+        buy_enumerations = self.get_possible_enumerations(portfolio, trading_information)  # [LxNxT]
+        lambda_buy = m.addMVar((buy_enumerations.shape[0],), vtype=GRB.BINARY)
+        # lambda_sell = m.addMVar(len(sell_enumerations), vtype=GRB.BINARY)
+        # m.addConstr(sum(lambda_sell) == 1)
+        m.addConstr(sum(lambda_buy) == 1)
 
         for i, time_step in enumerate(trading_information.index):
             prices = trading_information.loc[time_step].values
@@ -235,15 +239,12 @@ class ColumnGenerationPolicy(TradingPolicy):
             z_sell = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
             y_sell = m.addMVar(p.shape, vtype=GRB.BINARY)
             # y_buy = m.addMVar(p.shape, vtype=GRB.BINARY)
-            #lambda_sell = m.addMVar(len(sell_enumerations), vtype=GRB.BINARY)
-            lambda_buy = m.addMVar((len(buy_enumerations),), vtype=GRB.BINARY)
-            #m.addConstr(sum(lambda_sell) == 1)
-            m.addConstr(sum(lambda_buy) == 1)
 
-            vectors_buy = [possible_solution[i] for possible_solution in buy_enumerations]
-            #vectors_sell = [possible_solution[i] for possible_solution in sell_enumerations]
-            y_buy = lambda_buy @ vectors_buy
-            #y_sell = lambda_sell @ vectors_sell
+            # vectors_buy = [possible_solution[i] for possible_solution in buy_enumerations]
+            vectors_buy = buy_enumerations[:, :, i]  # [LxN]
+            # vectors_sell = [possible_solution[i] for possible_solution in sell_enumerations]
+            y_buy = lambda_buy @ vectors_buy  # [1xL] @ [LxN] = [1xN]
+            # y_sell = lambda_sell @ vectors_sell
 
             ## Directional Constraints
             bound_at_time = port_value_bounds.loc[time_step]
@@ -302,6 +303,8 @@ class ColumnGenerationPolicy(TradingPolicy):
             self.p_vals = [p.getValue() for p in p_arr]
             self.cash_vals = [_cash.getValue() for _cash in cash_arr]
             self.z_vals = [z.getValue() for z in z_arr]
+            self.lambda_buy = np.argwhere(lambda_buy.X >= 1)
+            self.strat = buy_enumerations[self.lambda_buy, :, :]
         except Exception as e:
             self.vprint(e)
             return (
@@ -330,8 +333,12 @@ class ColumnGenerationPolicy(TradingPolicy):
         p_buy = np.where(p_diff > 0, 1, 0)
         B = []
         iter_combinations = self.get_combinations(p_buy, len(trading_information.index))
+
         for c in iter_combinations:
             B.append(np.array(c))
+
+        B = np.array(B)
+
         return B
 
     def get_combinations(self, p, t):
@@ -344,6 +351,7 @@ class ColumnGenerationPolicy(TradingPolicy):
                 asset_comb = [relevant_matrices[i][j] for j in range(t)]
             combinations.append(asset_comb)
         iter_combinations = itertools.product(*combinations)
+
         return iter_combinations
 
 

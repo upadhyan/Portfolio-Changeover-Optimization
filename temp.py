@@ -2,12 +2,10 @@
 # # Main Runner
 
 # %%
-import pandas as pd
-
 from objects import *
 import pickle
 import os
-import matplotlib.pyplot as plt
+import plotly.express as px
 
 # %%
 # Get all files in the experiments folder
@@ -18,7 +16,6 @@ for e in experiment_names:
     with open(f"experiments/{e}", "rb") as f:
         exp = pickle.load(f)
         experiments.append(exp)
-exp = experiments[0]
 
 # %%
 # csmpo = RigidDayTrading(exp, verbose=False)
@@ -33,14 +30,15 @@ exp = experiments[0]
 # market_sim.plot_value()
 
 # %%
-csmpo = DayTradingPolicy(exp, verbose=False)
-day_trading_runner = MarketSimulator(exp, csmpo)
-day_trading_runner.run()
-day_trading_runner.plot_value()
-
+# policy = DirectionalPenaltyTradingPolicy(experiments[0], lambda_=0.5)
+policy = ColumnGenerationPolicy(experiments[2])
+simulator = MarketSimulator(experiments[2], policy, verbose=False)
+simulator.run()
+simulator.total_trades
+print("")
 # %%
-multi_sim = MultiSimRunner(experiments[:6], ["RigidDayTrading", "DayTrading"])
-multi_sim.run()
+# multi_sim = MultiSimRunner(experiments[:6], ["RigidDayTrading", "DayTrading"])
+# multi_sim.run()
 
-# %%
-multi_sim.get_results()
+# # %%
+# multi_sim.get_results()
