@@ -22,6 +22,132 @@ class ExperimentGenerationError(Exception):
     pass
 
 
+class PriceData:
+    def __init__(self,
+                 time: pd.Timestamp,
+                 history: pd.DataFrame,
+                 forecast: pd.DataFrame):
+        """
+        Args:
+            time: A pandas timestamp representing the time of the forecast
+            history: A dataframe with the columns being the stocks and the index being the dates.
+                     This represents the history of the stocks up to the time of the forecast.
+            forecast: A dataframe with the columns being the stocks and the index being the dates.
+        """
+        assert time == history.index[-1], "The time must be the same as the last row of the history"
+        # combine the index of history and forecast
+        self.time = time
+        self.history = history
+        self.current_prices = pd.DataFrame(self.history.iloc[-1]).T
+        self.forecast = forecast
+        # stack the known on top of the forecast
+        self.data = pd.concat([self.current_prices, self.forecast])
+
+    @staticmethod
+    def create_from_long(data):
+        pass
+
+
+class ExperimentalConfig:
+    def __init__(self,
+                 budget: int,
+                 stocks: list,
+                 trading_cost: int,
+                 horizon: int,
+                 starting_step: pd.Timestamp,
+                 initial_portfolio: pd.Series,
+                 target_portfolio: pd.Series,
+                 data_file: str,
+                 model_directory: str = './models'):
+        """
+        Args:
+
+        """
+        self.budget = budget
+        self.stocks = stocks
+        self.trading_cost = trading_cost
+        self.horizon = horizon
+        self.starting_step = starting_step
+        self.initial_portfolio = initial_portfolio
+        self.target_portfolio = target_portfolio
+        self.data_file = data_file
+        self.model_directory = model_directory
+        self.num_stocks = len(self.stocks)
+
+
+    @staticmethod
+    def create_config(
+            budget: int = random.randint(5000, 350000),
+            stocks: list = None,
+            num_stocks: int = random.randint(5, 30),
+            trading_cost: int = random.randint(2, 10),
+            horizon: int = random.randint(30, 90),
+            starting_step: pd.Timestamp = None,
+            data_file: str = './raw_data/spx_stock_prices.parquet',
+            model_directory: str = './models'
+    ):
+        """
+        Args:
+            budget: The budget for the experiment
+            stocks: The stocks to use in the experiment
+            num_stocks: The number of stocks to use in the experiment
+            trading_cost: The trading cost for the experiment
+            horizon: The horizon for the experiment
+            starting_step: The starting step for the experiment
+            data_file: The file to load the data from
+            model_directory: The directory to load the models from
+        """
+
+        # load the data
+        stock_prices = pd.read_parquet(data_file)
+        stock_prices = stock_prices.loc['2018-01-01':"2022-03-01"]
+        # drop columns with nan values
+        stock_prices = stock_prices.dropna(axis=1)
+
+        if stocks is None:
+            stocks = stock_prices.columns.tolist()
+            stocks = random.sample(stocks, num_stocks)
+        assert set(stocks).issubset(stock_prices.columns.tolist()), "Stocks must be in the data"
+
+        # choose a random starting step
+        if starting_step is None:
+            starting_step = random.choice(stock_prices.index[:-(horizon + 1)])
+        assert starting_step in stock_prices.index[:-horizon], \
+            f"Starting step must be in the data at least {horizon + 1} days before the end of the data"
+        current_prices = stock_prices.loc[starting_step, stocks]
+        initial_portfolio = pd.Series(0, index=stocks)
+        add = pd.Series(0, index=stocks)
+        # create a random initial portfolio with a budget using the current prices
+        while initial_portfolio @ current_prices < budget:
+            add[random.choice(stocks)] += 1
+            if add @ current_prices + initial_portfolio @ current_prices > budget:
+                break
+            initial_portfolio += add
+            add = pd.Series(0, index=stocks)
+
+        target_portfolio = pd.Series(0, index=stocks)
+        add = pd.Series(0, index=stocks)
+        # create a random initial portfolio with a budget using the current prices
+        while target_portfolio @ current_prices < budget:
+            add[random.choice(stocks)] += 1
+            if add @ current_prices + target_portfolio @ current_prices > budget:
+                break
+            target_portfolio += add
+            add = pd.Series(0, index=stocks)
+        return ExperimentalConfig(
+            budget=budget,
+            stocks=stocks,
+            trading_cost=trading_cost,
+            horizon=horizon,
+            starting_step=starting_step,
+            initial_portfolio=initial_portfolio,
+            target_portfolio=target_portfolio,
+            data_file=data_file,
+            model_directory=model_directory
+        )
+
+
+
 class ExperimentInfo:
     def __init__(self, stock_prices: pd.DataFrame, covariates: pd.DataFrame, lookback):
         self.num_stocks = None
@@ -261,14 +387,14 @@ def generate_experiments(stock_price_df, covariates, num_experiments, output_dir
     print(f"Average error is {np.mean(average_errors)}")
 
 
-if __name__ == "__main__":
-    print("reading data")
-    prices = pd.read_parquet("raw_data/spx_stock_prices.parquet")
-    treasury_rate_files = ["daily-treasury-rates.csv"] + [f"daily-treasury-rates ({i}).csv" for i in range(1, 25)]
-    rates_df = [pd.read_csv(f"raw_data/{file}", index_col=0) for file in treasury_rate_files]
-    rates_df = pd.concat(rates_df)
-    rates_df.index = pd.to_datetime(rates_df.index)
-    # sort rates_df by date
-    rates_df = rates_df.sort_index()
-    print("Start Generation")
-    generate_experiments(prices, rates_df, 5, "experiments", lookback=48, error_max=10)
+# if __name__ == "__main__":
+#     print("reading data")
+#     prices = pd.read_parquet("raw_data/spx_stock_prices.parquet")
+#     treasury_rate_files = ["daily-treasury-rates.csv"] + [f"daily-treasury-rates ({i}).csv" for i in range(1, 25)]
+#     rates_df = [pd.read_csv(f"raw_data/{file}", index_col=0) for file in treasury_rate_files]
+#     rates_df = pd.concat(rates_df)
+#     rates_df.index = pd.to_datetime(rates_df.index)
+#     # sort rates_df by date
+#     rates_df = rates_df.sort_index()
+#     print("Start Generation")
+#     generate_experiments(prices, rates_df, 5, "experiments", lookback=48, error_max=10)
