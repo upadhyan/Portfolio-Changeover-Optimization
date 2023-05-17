@@ -9,6 +9,7 @@ from experimental_config import *
 from time import time
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import itertools
 
 
 class TradingPolicy(ABC):
@@ -89,7 +90,7 @@ class DirectionalTradingPolicy(TradingPolicy):
         m = gp.Model(env=env)
         n_timesteps = len(trading_information.index)
         cash = current_cash
-
+        ### Generate all possible trade matrices -> store it in a matrix list of size len(trading_info)
         for time_step in trading_information.index:
             prices = trading_information.loc[time_step].values
 
@@ -97,6 +98,9 @@ class DirectionalTradingPolicy(TradingPolicy):
             z_sell = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
             y_sell = m.addMVar(p.shape, vtype=GRB.BINARY)
             y_buy = m.addMVar(p.shape, vtype=GRB.BINARY)
+            ## lambda_it_sell = admvar(L(## of choice), vtype = binary )
+            ## lambda_it_buy = admvar(L(## of choice), vtype = binary )
+            ## m.add constr (sum lambdas  == 1)
 
             ## Directional Constraints
             bound_at_time = port_value_bounds.loc[time_step]
@@ -106,9 +110,14 @@ class DirectionalTradingPolicy(TradingPolicy):
             m.addConstr(y_buy <= buy_constraint.values)
             m.addConstr(y_sell <= (1 - buy_constraint.values))
 
+            # pull relevant vectors
+            # vectors_buy = [buy_matrix[:,timestep] for matrix in buy_matrix_list]
+            # vectors_buy = [sell_matrix[:,timestep] for matrix in sell_matrix_list]
 
             # Next Portfolio
             p_next = p + z_buy - z_sell
+            # y_sell = lambda_it_sell^T @ vectors_sell
+            # y_buy = lambda_it_buy^T @ vectors_buy
             cash_next = prices @ (z_sell - z_buy) - F @ y_sell - F @ y_buy + cash
 
             ## Trading fees
@@ -124,7 +133,7 @@ class DirectionalTradingPolicy(TradingPolicy):
             ## No shorting
             m.addConstr(p_next >= 0)
 
-            prob_arr.append(- F @ y_sell - F @ y_buy)
+            prob_arr.append(-F @ y_sell - F @ y_buy)
             cash = cash_next
             p = p_next
 
@@ -174,6 +183,189 @@ class DirectionalTradingPolicy(TradingPolicy):
             ),
             value,
         )
+
+
+class ColumnGenerationPolicy(TradingPolicy):
+    def __init__(self, experiment: ExperimentInfo, verbose=True, sell_switch=True, **kwargs):
+        super().__init__(experiment, verbose, **kwargs)
+        self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.trading_cost
+        self.sell_switch = sell_switch
+
+    def get_trades(self, portfolio, t):
+        env = gp.Env(empty=True)
+        env.setParam("OutputFlag", False)
+        env.setParam("TimeLimit", 300)
+        env.start()
+        #######################
+        p = portfolio.values[:-1]  # portfolio of number of positions
+        current_cash = portfolio.values[-1]  # cash amount
+
+        value = self.known_dict[t] @ p + current_cash
+        assert value > 0.0
+        previous_time_string = self.known_dict[t].name.strftime("%Y-%m-%d")
+        self.vprint(f"Current Portfolio Value at {previous_time_string}: {value}")
+        prob_arr = []
+        z_arr = []
+        cash_arr = []
+        p_arr = []
+
+        ## Direction Definition
+        initial_portfolio = self.exp.initial_portfolio.copy()[:-1]
+        final = self.exp.final_portfolio.copy()[:-1]
+
+        difference = final - initial_portfolio
+
+        buy_constraint = (difference >= 0) * 1
+        F = self.F
+
+        trading_information = pd.concat([pd.DataFrame(self.known_dict[t]).T, self.price_dict[t]])
+        returns = trading_information.pct_change().fillna(0) + 1
+
+        port_value_bounds = value * returns.max(axis=1).cumprod()
+
+        p_next = None
+        m = gp.Model(env=env)
+        n_timesteps = len(trading_information.index)
+        cash = current_cash
+        buy_enumerations = self.get_possible_enumerations(portfolio, trading_information, mode="buy")  # [LxNxT]
+        lambda_buy = m.addMVar((buy_enumerations.shape[0],), vtype=GRB.BINARY)
+
+        if self.sell_switch:
+            sell_enumerations = self.get_possible_enumerations(portfolio, trading_information, mode="sell")  # [KxNxT]
+            lambda_sell = m.addMVar((sell_enumerations.shape[0]), vtype=GRB.BINARY)
+            m.addConstr(sum(lambda_sell) == 1)
+        m.addConstr(sum(lambda_buy) == 1)
+
+        for i, time_step in enumerate(trading_information.index):
+            prices = trading_information.loc[time_step].values
+
+            z_buy = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
+            z_sell = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
+
+            if not self.sell_switch:
+                y_sell = m.addMVar(p.shape, vtype=GRB.BINARY)
+            # y_buy = m.addMVar(p.shape, vtype=GRB.BINARY)
+
+            vectors_buy = buy_enumerations[:, :, i]  # [LxN]
+            y_buy = lambda_buy @ vectors_buy  # [1xL] @ [LxN] = [1xN]
+
+            if self.sell_switch:
+                vectors_sell = sell_enumerations[:, :, i]  # [KxN]
+                y_sell = lambda_sell @ vectors_sell  # [1xK] @ [KxN] = [1xN]
+
+            ## Directional Constraints
+            bound_at_time = port_value_bounds.loc[time_step]
+            M = np.ceil(bound_at_time / prices)
+            m.addConstr(y_buy <= buy_constraint.values)
+            m.addConstr(y_sell <= (1 - buy_constraint.values))
+
+            # Next Portfolio
+            p_next = p + z_buy - z_sell
+            cash_next = prices @ (z_sell - z_buy) - F @ y_sell - F @ y_buy + cash
+
+            ## Trading fees
+            ### if we sell a stock, we pay a trading price
+            m.addConstr(M * y_sell >= z_sell)
+
+            ## If we buy a stock, we pay a trading fee
+            m.addConstr(M * y_buy >= z_buy)
+
+            ## No borrowing
+            m.addConstr(cash_next >= 0)
+
+            ## No shorting
+            m.addConstr(p_next >= 0)
+
+            prob_arr.append(-F @ y_sell - F @ y_buy)
+            cash = cash_next
+            p = p_next
+
+            z_arr.append(z_buy - z_sell)
+            cash_arr.append(cash_next)
+            p_arr.append(p_next)
+
+        final_p = self.exp.final_portfolio.values[:-1]
+        # Terminal constraint.
+        m.addConstr(p_next >= final_p, name="terminal")
+
+        prob_arr.append(prices @ p_next + cash_next)
+
+        # Combine all time instances
+        obj = sum(prob_arr)
+
+        m.setObjective(obj, GRB.MAXIMIZE)
+        m.update()
+        # get model constraints
+        self.vprint(
+            f"\t Optimizing with {n_timesteps} time steps, "
+            f"{len(m.getConstrs())} constraints, and {len(m.getVars())} variables..."
+        )
+        t1 = time()
+        m.optimize()
+        t2 = time()
+        self.vprint(
+            f"\t Optimized. Time taken: {t2 - t1}",
+        )
+        try:
+            self.p_vals = [p.getValue() for p in p_arr]
+            self.cash_vals = [_cash.getValue() for _cash in cash_arr]
+            self.z_vals = [z.getValue() for z in z_arr]
+            self.lambda_buy = np.argwhere(lambda_buy.X >= 1)
+            self.strat_b = buy_enumerations[self.lambda_buy, :, :][0][0]
+            if self.sell_switch:
+                self.lambda_sell = np.argwhere(lambda_sell.X >= 1)
+                self.strat_s = sell_enumerations[self.lambda_sell, :, :][0][0]
+        except Exception as e:
+            self.vprint(e)
+            return (
+                pd.Series(index=portfolio.index, data=0, name=t),
+                self.known_dict[t] @ portfolio[:-1] + portfolio[-1],
+            )
+        assert (np.round(self.p_vals[0]) >= 0).all()
+        del m
+        del env
+        gc.collect()
+        return (
+            pd.Series(
+                index=portfolio.index, data=(np.append(self.z_vals[0], self.cash_vals[0] - current_cash)), name=t
+            ),
+            value,
+        )
+
+    def get_possible_enumerations(self, portfolio, trading_information, mode="buy"):
+        # Get the current portfolio
+        p = portfolio.values[:-1]
+        current_cash = portfolio.values[-1]
+        p_final = self.exp.final_portfolio.values[:-1]
+        # prices = trading_information.loc[time_step].values
+
+        p_diff = p_final - p
+        if mode == "buy":
+            p_tx = np.where(p_diff > 0, 1, 0)
+        if mode == "sell":
+            p_tx = np.where(p_diff < 0, 1, 0)
+        B = []
+        iter_combinations = self.get_combinations(p_tx, len(trading_information.index))
+
+        for c in iter_combinations:
+            B.append(np.array(c))
+
+        B = np.array(B)
+
+        return B
+
+    def get_combinations(self, p, t):
+        relevant_matrices = [np.zeros(t) if i == 0 else np.identity(t) for i in p]
+        combinations = []
+        for i, vec in enumerate(p):
+            if vec == 0:
+                asset_comb = [np.zeros(t)]
+            else:
+                asset_comb = [relevant_matrices[i][j] for j in range(t)]
+            combinations.append(asset_comb)
+        iter_combinations = itertools.product(*combinations)
+
+        return iter_combinations
 
 
 class DirectionalPenaltyTradingPolicy(TradingPolicy):
@@ -256,7 +448,7 @@ class DirectionalPenaltyTradingPolicy(TradingPolicy):
 
             sell_penalty = (self.lambda_ * buy_constraint.values * prices) @ z_sell
             buy_penalty = (self.lambda_ * (1 - buy_constraint.values) * prices) @ z_buy
-            prob_arr.append(- F @ y_sell - F @ y_buy - sell_penalty - buy_penalty)
+            prob_arr.append(-F @ y_sell - F @ y_buy - sell_penalty - buy_penalty)
             cash = cash_next
             p = p_next
 
@@ -401,7 +593,6 @@ class NaivePolicy(TradingPolicy):
         return pd.Series(index=portfolio.index, data=(np.append(self.z, self.cash_next - cash)), name=t), value
 
 
-
 class MarketSimulator:
     def __init__(self, experiment: ExperimentInfo, policy: TradingPolicy, verbose=True):
         self.configuration = experiment
@@ -437,8 +628,7 @@ class MarketSimulator:
             t1 = time()
             trades, value = self.policy.get_trades(portfolio, t)
             asset_trades = trades[:-1]
-            self.total_trading_cost += ((np.round(
-                asset_trades) != 0) * 1).sum() * self.configuration.trading_cost
+            self.total_trading_cost += ((np.round(asset_trades) != 0) * 1).sum() * self.configuration.trading_cost
             self.total_trades += (np.round(asset_trades) != 0).sum()
             t2 = time()
             self.solve_times.append(t2 - t1)
@@ -511,8 +701,6 @@ RIGID = "RigidDirectional"
 DIRECTIONAL_TRADING = "Directional"
 
 
-def RIGID_INCENTIVE_TRADING(lambda_=0.5):
-    return f"RigidIncentive_{lambda_ * 100}"
 
 
 def DIRECTIONAL_INCENTIVE_TRADING(lambda_=0.5):
@@ -520,6 +708,9 @@ def DIRECTIONAL_INCENTIVE_TRADING(lambda_=0.5):
 
 
 
+
+def COL_GEN(switch = True):
+    return f"ColGen_{switch}"
 
 
 class MultiSimRunner:
@@ -543,6 +734,9 @@ class MultiSimRunner:
             penalty = lambda_
         elif policy == "Directional":
             policy_instance = DirectionalTradingPolicy(exp, verbose=False)
+        elif "ColGen" in policy:
+            switch = policy.split("_")[1] == "True"
+            policy_instance = ColumnGenerationPolicy(exp, sell_switch = switch, verbose=False)
         else:
             raise ValueError("Policy not found")
         return policy_instance, penalty
@@ -565,14 +759,14 @@ class MultiSimRunner:
             "leftover_cash": final_portfolio[-1],
             "penalty": penalty,
             "total_trades": simulator.total_trades,
-            "total_trading_costs": simulator.total_trading_cost
+            "total_trading_costs": simulator.total_trading_cost,
         }
 
     def run(self, save_file=None):
         result_list = []
         pbar = tqdm(self.experiments)
         for experiment in pbar:
-            with open(f"{self.experiments_directory}/{experiment}", 'rb') as f:
+            with open(f"{self.experiments_directory}/{experiment}", "rb") as f:
                 exp = pickle.load(f)
             for policy in self.policies:
                 policy_instance, penalty = self.get_policy(policy, exp)
@@ -584,7 +778,8 @@ class MultiSimRunner:
                 pbar.set_description(f"Finished Running {policy} on {exp.exp_id}")
                 self.simulators[(exp.exp_id, policy)] = simulator
                 result_list.append(
-                    self.provide_run_stats(exp, simulator, policy, result_list, t1, t2, final_portfolio, penalty))
+                    self.provide_run_stats(exp, simulator, policy, result_list, t1, t2, final_portfolio, penalty)
+                )
                 gc.collect()
                 if save_file is not None:
                     self.results = pd.DataFrame(result_list)
@@ -611,6 +806,7 @@ class MultiSimRunner:
                 pbar.set_description(f"Finished Running {policy} on {exp.exp_id}")
                 self.simulators[(exp.exp_id, policy)] = simulator
                 result_list.append(
-                    self.provide_run_stats(exp, simulator, policy, result_list, t1, t2, final_portfolio, penalty))
+                    self.provide_run_stats(exp, simulator, policy, result_list, t1, t2, final_portfolio, penalty)
+                )
                 gc.collect()
         return pd.DataFrame(result_list)

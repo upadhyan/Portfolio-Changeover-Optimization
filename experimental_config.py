@@ -122,7 +122,7 @@ class ExperimentInfo:
         subset = subset.replace(0, np.nan)
         # Drop all columns with nans
         subset = subset.dropna(axis=1, how="any")
-        n = random.randint(20, 50)
+        n = 3
         # Choose n random stocks
         stocks = random.sample(subset.columns.tolist(), n)
         self.set_stocks(stocks)
@@ -271,4 +271,4 @@ if __name__ == "__main__":
     # sort rates_df by date
     rates_df = rates_df.sort_index()
     print("Start Generation")
-    generate_experiments(prices, rates_df, 10, "experiments", lookback=48, error_max=9)
+    generate_experiments(prices, rates_df, 5, "experiments", lookback=48, error_max=10)
