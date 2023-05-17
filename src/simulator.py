@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from tqdm import trange
-from source.policies import *
+from src.policies import *
 
 NAIVE = "Naive"
 RIGID = "RigidDirectional"
