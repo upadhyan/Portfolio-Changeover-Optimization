@@ -43,9 +43,18 @@ class PriceData:
         # stack the known on top of the forecast
         self.data = pd.concat([self.current_prices, self.forecast])
 
-    @staticmethod
-    def create_from_long(data):
+    def update(self):
+        # TODO: make sure everything that needs updating is updated
         pass
+
+    @staticmethod
+    def convert_from_compact(data):
+        # TODO: ds(datestamp), unique(ticket), y (price)
+        pass
+
+    @staticmethod
+    def convert_from_long(data):
+        # TODO: columns: tickers, data: values, index: date
 
 
 class ExperimentalConfig:
