@@ -10,33 +10,11 @@ class TradingPolicy(ABC):
     def __init__(self, experiment: ExperimentInfo, verbose=False, **kwargs):
         self.exp = experiment
         self.trading_times = experiment.full_trading_times + [experiment.full_trading_times[-1] + pd.Timedelta(days=1)]
-        self.price_dict = self.convert_to_price_dict()
-        self.known_dict = self.develop_known_dict()
         self.verbose = verbose
 
     @abstractmethod
     def get_trades(self, portfolio, t, price_data):
         pass
-
-    # def convert_to_price_dict(self):
-    #     price_dict = {}
-    #     for i in range(len(self.trading_times)):
-    #         if i != len(self.exp.full_trading_times):
-    #             price_dict[self.trading_times[i]] = self.exp.forecasts[i]
-    #         else:
-    #             price_dict[self.trading_times[i]] = None
-    #     return price_dict
-
-    # def develop_known_dict(self):
-    #     known_dict = {}
-    #     for i in range(len(self.trading_times)):
-    #         if i == 0:
-    #             known_dict[self.trading_times[i]] = self.exp.initial_prices
-    #         else:
-    #             known_dict[self.trading_times[i]] = self.exp.truth.loc[self.trading_times[i - 1].strftime("%Y-%m-%d")]
-    #     last_known_dict = self.trading_times[-1] + pd.Timedelta(days=1)
-    #     known_dict[last_known_dict] = self.exp.truth.loc[self.trading_times[-2].strftime("%Y-%m-%d")]
-    #     return known_dict
 
     def vprint(self, print_statement):
         if self.verbose:
