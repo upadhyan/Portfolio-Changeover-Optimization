@@ -14,7 +14,7 @@ dependencies:
   - pytorch-lightning>=2.0.0
   - neuralforecast==1.5.0
   - plotly==5.14.1
-  - gurobipy==10.0.1
+  - gurobi==10.0.1
   - python-kaleido
   - tqdm
   - pip
