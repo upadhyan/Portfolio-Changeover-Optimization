@@ -331,8 +331,8 @@ class ExperimentInfo:
         subset = subset.reindex(full_idx, method="ffill")
         subset.index.name = "date"
 
-        # Get the date 30 trading periods before the end
-        split_date = subset.index[-31]
+        # Get the date T trading periods before the end
+        split_date = subset.index[-(self.horizon + 1)]
 
         # reset the index
         subset = subset.reset_index()
