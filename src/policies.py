@@ -7,7 +7,15 @@ import itertools
 
 
 class TradingPolicy(ABC):
+    """Abstract class for trading policies. All trading policies must inherit from this class."""
+
     def __init__(self, experiment: ExperimentInfo, verbose=False, **kwargs):
+        """Generate a Trading Policy.
+
+        Args:
+            experiment (ExperimentInfo): pre-generated experiment using experimental_config.py
+            verbose (bool, optional): Defaults to False.
+        """
         self.exp = experiment
         self.trading_times = experiment.full_trading_times + [experiment.full_trading_times[-1] + pd.Timedelta(days=1)]
         self.verbose = verbose
@@ -22,7 +30,15 @@ class TradingPolicy(ABC):
 
 
 class DirectionalTradingPolicy(TradingPolicy):
+    """This policy restrics trades in the direction of the final portfolio. It uses a constraint to enforce this."""
+
     def __init__(self, experiment: ExperimentInfo, verbose=True, **kwargs):
+        """Generate a Directional Trading Policy.
+
+        Args:
+            experiment (ExperimentInfo): pre-generated experiment using experimental_config.py
+            verbose (bool, optional): Defaults to True.
+        """
         super().__init__(experiment, verbose, **kwargs)
         self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.trading_cost
 
@@ -157,7 +173,19 @@ class DirectionalTradingPolicy(TradingPolicy):
 
 
 class ColumnGenerationPolicy(TradingPolicy):
+    """WIP: This policy uses column generation to solve the problem. It enumerates feasible directional trades
+    and uses a column generation approach to select the best trades to execute.
+
+    """
+
     def __init__(self, experiment: ExperimentInfo, verbose=True, sell_switch=True, **kwargs):
+        """Generate a Column Generation Trading Policy.
+
+        Args:
+            experiment (ExperimentInfo): pre-generated experiment using experimental_config.py
+            verbose (bool, optional): Defaults to True.
+            sell_switch (bool, optional): When true, it will apply Column Generation method on sell trades. Defaults to True.
+        """
         super().__init__(experiment, verbose, **kwargs)
         self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.trading_cost
         self.sell_switch = sell_switch
@@ -339,7 +367,18 @@ class ColumnGenerationPolicy(TradingPolicy):
 
 
 class DirectionalPenaltyTradingPolicy(TradingPolicy):
+    """This policy is a modification of the Directional Trading Policy. Instead of a constraint on trading in one direction only,
+    it uses a penalty term in the objective function to penalize trades that are not in the direction of the final portfolio.
+    """
+
     def __init__(self, experiment: ExperimentInfo, verbose=True, lambda_=0.5, **kwargs):
+        """Generate a Directional Trading Policy with a penalty term in the objective function.
+
+        Args:
+            experiment (ExperimentInfo): pre-generated experiment using experimental_config.py
+            verbose (bool, optional): Defaults to True.
+            lambda_ (float, optional): Penalty importance in the objective. Defaults to 0.5.
+        """
         super().__init__(experiment, verbose, **kwargs)
         self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.trading_cost
         self.lambda_ = lambda_
@@ -470,7 +509,15 @@ class DirectionalPenaltyTradingPolicy(TradingPolicy):
 
 
 class NaivePolicy(TradingPolicy):
+    """This policy naively executes all the necessary trades to get to the final portfolio in the immediate time step."""
+
     def __init__(self, experiment: ExperimentInfo, verbose=True, **kwargs):
+        """Naive Policy
+
+        Args:
+            experiment (ExperimentInfo): pre-generated experiment using experimental_config.py
+            verbose (bool, optional): Defaults to True.
+        """
         super().__init__(experiment, verbose, **kwargs)
         self.initial = True
         self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.trading_cost
