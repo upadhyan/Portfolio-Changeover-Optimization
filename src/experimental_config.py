@@ -23,10 +23,7 @@ class ExperimentGenerationError(Exception):
 
 
 class PriceData:
-    def __init__(self,
-                 time: pd.Timestamp,
-                 history: pd.DataFrame,
-                 forecast: pd.DataFrame):
+    def __init__(self, time: pd.Timestamp, history: pd.DataFrame, forecast: pd.DataFrame):
         """
         Args:
             time: A pandas timestamp representing the time of the forecast
@@ -55,22 +52,34 @@ class PriceData:
     @staticmethod
     def convert_from_long(data):
         # TODO: columns: tickers, data: values, index: date
+        pass
 
 
 class ExperimentalConfig:
-    def __init__(self,
-                 budget: int,
-                 stocks: list,
-                 trading_cost: int,
-                 horizon: int,
-                 starting_step: pd.Timestamp,
-                 initial_portfolio: pd.Series,
-                 target_portfolio: pd.Series,
-                 data_file: str,
-                 model_directory: str = './models'):
-        """
-        Args:
+    def __init__(
+        self,
+        budget: int,
+        stocks: list,
+        trading_cost: int,
+        horizon: int,
+        starting_step: pd.Timestamp,
+        initial_portfolio: pd.Series,
+        target_portfolio: pd.Series,
+        data_file: str,
+        model_directory: str = "./models",
+    ):
+        """_summary_
 
+        Args:
+            budget (int): _description_
+            stocks (list): _description_
+            trading_cost (int): _description_
+            horizon (int): _description_
+            starting_step (pd.Timestamp): _description_
+            initial_portfolio (pd.Series): _description_
+            target_portfolio (pd.Series): _description_
+            data_file (str): _description_
+            model_directory (str, optional): _description_. Defaults to "./models".
         """
         self.budget = budget
         self.stocks = stocks
@@ -83,17 +92,16 @@ class ExperimentalConfig:
         self.model_directory = model_directory
         self.num_stocks = len(self.stocks)
 
-
     @staticmethod
     def create_config(
-            budget: int = random.randint(5000, 350000),
-            stocks: list = None,
-            num_stocks: int = random.randint(5, 30),
-            trading_cost: int = random.randint(2, 10),
-            horizon: int = random.randint(30, 90),
-            starting_step: pd.Timestamp = None,
-            data_file: str = './raw_data/spx_stock_prices.parquet',
-            model_directory: str = './models'
+        budget: int = random.randint(5000, 350000),
+        stocks: list = None,
+        num_stocks: int = random.randint(5, 30),
+        trading_cost: int = random.randint(2, 10),
+        horizon: int = random.randint(30, 90),
+        starting_step: pd.Timestamp = None,
+        data_file: str = "./raw_data/spx_stock_prices.parquet",
+        model_directory: str = "./models",
     ):
         """
         Args:
@@ -109,7 +117,7 @@ class ExperimentalConfig:
 
         # load the data
         stock_prices = pd.read_parquet(data_file)
-        stock_prices = stock_prices.loc['2018-01-01':"2022-03-01"]
+        stock_prices = stock_prices.loc["2018-01-01":"2022-03-01"]
         # drop columns with nan values
         stock_prices = stock_prices.dropna(axis=1)
 
@@ -120,9 +128,10 @@ class ExperimentalConfig:
 
         # choose a random starting step
         if starting_step is None:
-            starting_step = random.choice(stock_prices.index[:-(horizon + 1)])
-        assert starting_step in stock_prices.index[:-horizon], \
-            f"Starting step must be in the data at least {horizon + 1} days before the end of the data"
+            starting_step = random.choice(stock_prices.index[: -(horizon + 1)])
+        assert (
+            starting_step in stock_prices.index[:-horizon]
+        ), f"Starting step must be in the data at least {horizon + 1} days before the end of the data"
         current_prices = stock_prices.loc[starting_step, stocks]
         initial_portfolio = pd.Series(0, index=stocks)
         add = pd.Series(0, index=stocks)
@@ -152,13 +161,43 @@ class ExperimentalConfig:
             initial_portfolio=initial_portfolio,
             target_portfolio=target_portfolio,
             data_file=data_file,
-            model_directory=model_directory
+            model_directory=model_directory,
         )
 
 
-
 class ExperimentInfo:
-    def __init__(self, stock_prices: pd.DataFrame, covariates: pd.DataFrame, lookback):
+    """Experiment Class, contains all the information about an experiment, getters, setters, and generators"""
+
+    def __init__(
+        self,
+        stock_prices: pd.DataFrame,
+        covariates: pd.DataFrame,
+        lookback: int,
+        min_horizon: int,
+        max_horizon: int,
+        min_num_stocks: int,
+        max_num_stocks: int,
+    ):
+        """Create an experiment
+
+        Args:
+            stock_prices (pd.DataFrame): Stock Price Dataframe
+            covariates (pd.DataFrame): Covariance Matrix for the stocks
+            lookback (int): Number of lookback days to use for estimates
+            min_horizon (int): Minimum investment horizon for experiments (hint: set min = max for a fixed value)
+            max_horizon (int): Maximum investment horizon for experiments
+            min_num_stocks (int): Minimum number of stocks to use in experiments (hint: set min = max for a fixed value)
+            max_num_stocks (int): Maximum number of stocks to use in experiments
+        """
+
+        # Defined variables
+        self.rng = np.random.default_rng()
+        self.lookback = lookback
+        self.horizon = self.rng.integers(min_horizon, max_horizon)
+        self.number_of_stocks = self.rng.integers(min_num_stocks, max_num_stocks)
+        self.trading_cost = self.rng.integers(2, 10)
+
+        # None variables
         self.num_stocks = None
         self.stocks = None
         self.pct_variance = None
@@ -173,9 +212,7 @@ class ExperimentInfo:
         self.final_date = None
         self.truth = None
         self.initial_portfolio_value = None
-        self.lookback = lookback
         self.full_trading_times = None
-        self.trading_cost = np.random.randint(2, 10)
         self.exp_id = None
         self.generate_experiment(stock_prices, covariates)
 
@@ -242,12 +279,15 @@ class ExperimentInfo:
     def generate_experiment(self, stock_prices: pd.DataFrame, covariates: pd.DataFrame):
         # Choose a random date
         random_date = self.choose_split_date()
+
         # get the date two years before random date
-        start_date = random_date - pd.DateOffset(years=5)
-        cov_start_date = random_date - pd.DateOffset(years=6)
+        start_date = random_date - pd.DateOffset(years=2)
+        cov_start_date = random_date - pd.DateOffset(years=2)
+
         # get the date 30 business days after random date
         end_date = random_date + pd.DateOffset(days=30)
         cov_end_date = random_date + pd.DateOffset(days=90)
+
         # convert random date to a string
         start_date = start_date.strftime("%Y-%m-%d")
         end_date = end_date.strftime("%Y-%m-%d")
@@ -257,9 +297,9 @@ class ExperimentInfo:
         subset = subset.replace(0, np.nan)
         # Drop all columns with nans
         subset = subset.dropna(axis=1, how="any")
-        n = 3
+
         # Choose n random stocks
-        stocks = random.sample(subset.columns.tolist(), n)
+        stocks = random.sample(subset.columns.tolist(), self.number_of_stocks)
         self.set_stocks(stocks)
 
         # subset the data to only the stocks we chose
@@ -364,31 +404,61 @@ class ExperimentInfo:
         return random_date
 
 
-def generate_experiments(stock_price_df, covariates, num_experiments, output_dir, lookback=128, error_max=9):
+def generate_experiments(
+    stock_price_df,
+    covariates,
+    num_experiments,
+    output_dir,
+    min_horizon: int,
+    max_horizon: int,
+    max_num_stocks: int,
+    min_num_stocks: int,
+    lookback=128,
+    error_max=9,
+):
+    """Generates a set of n experiments and saves them to a directory
+
+    Args:
+        stock_price_df (_type_): Stock Price Dataframe
+        covariates (_type_): Covariance Matrix for the stocks
+        num_experiments (_type_): Number of experiments to generate
+        output_dir (_type_): Output directory for experiments
+        min_horizon (int): Minimum investment horizon for experiments (hint: set min = max for a fixed value)
+        max_horizon (int): Maximum investment horizon for experiments
+        max_num_stocks (int): Maximum number of stocks to use in experiments
+        min_num_stocks (int): Minimum number of stocks to use in experiments (hint: set min = max for a fixed value)
+        lookback (int, optional): Number of lookback days to use for estimates. Defaults to 128.
+        error_max (int, optional): Max estimation error allowed for forecast model. Defaults to 9.
+    """
     pbar = trange(num_experiments)
     average_errors = []
     for i in pbar:
-        too_much_error = True
-        while too_much_error:
+        # Try to generate a valid experiment with the given parameters
+        while True:
             try:
-                experiment = ExperimentInfo(stock_price_df, covariates, lookback)
+                experiment = ExperimentInfo(
+                    stock_price_df, covariates, min_horizon, max_horizon, min_num_stocks, max_num_stocks, lookback
+                )
                 # check if the output directory exists, if not, create it
                 if not os.path.exists(output_dir):
                     os.makedirs(output_dir)
+
+                # create a file name for the experiment
                 f_name = (
                     f"exp_{experiment.num_stocks}_{experiment.budget}"
                     f"_{int(experiment.initial_portfolio_value)}"
                     f"_{int(experiment.trading_cost)}.pkl"
                 )
+
                 # save the experiment to a pickle file in output_dir
                 if experiment.average_error < error_max:
-                    too_much_error = False
                     with open(os.path.join(output_dir, f_name), "wb") as f:
                         pickle.dump(experiment, f)
                     average_errors.append(experiment.average_error)
                     pbar.set_description(f"Experiment {i} saved to {f_name}. Error is {experiment.average_error}")
                     del experiment
                     gc.collect()
+                    break
                 else:
                     pbar.set_description(f"Retrying experiment {i}. Error is {experiment.average_error}")
             except ExperimentGenerationError as e:
