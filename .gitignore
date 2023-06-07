@@ -136,3 +136,8 @@ experiments/
 small_experiments/
 .vscode/
 wsl2-hostinfo.txt
+
+lightning_logs/
+AAL_test.csv
+.vscode
+
