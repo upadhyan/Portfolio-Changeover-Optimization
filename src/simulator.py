@@ -28,6 +28,7 @@ class MarketSimulator:
         self.portfolio_value = []
         self.trading_times = []
         self.solve_times = []
+        self.forecast_times = []
         self.verbose = verbose
         self.gain = 0
         self.status = "Not Run"
@@ -52,6 +53,8 @@ class MarketSimulator:
             relevant_time = self.stored_times[i - 1] if i > 0 else self.configuration.initial_prices.name
             t1_forecast = time()
             price_data = self.forecast.update(t, portfolio.index.tolist())
+            t2_forecast = time()
+            self.forecast_times.append(t2_forecast - t1_forecast)
             t1 = time()
             trades, value = self.policy.get_trades(portfolio, t, price_data)
             asset_trades = trades[:-1]

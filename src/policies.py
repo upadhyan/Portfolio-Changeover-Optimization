@@ -51,7 +51,7 @@ class DirectionalTradingPolicy(TradingPolicy):
         p = portfolio.values[:-1]  # portfolio of number of positions
         current_cash = portfolio.values[-1]  # cash amount
 
-        value = price_data.current @ p + current_cash
+        value = price_data.loc[t] @ p + current_cash
         assert value > 0.0
         self.vprint(f"Current Portfolio Value at {t}: {value}")
         prob_arr = []
@@ -68,18 +68,18 @@ class DirectionalTradingPolicy(TradingPolicy):
         buy_constraint = (difference >= 0) * 1
         F = self.F
 
-        returns = price_data.data.pct_change().fillna(0) + 1
+        returns = price_data.pct_change().fillna(0) + 1
 
         port_value_bounds = value * returns.max(axis=1).cumprod()
 
         p_next = None
         m = gp.Model(env=env)
-        time_steps = price_data.data.index
+        time_steps = price_data.index
         n_timesteps = len(time_steps)
         cash = current_cash
         ### Generate all possible trade matrices -> store it in a matrix list of size len(trading_info)
         for time_step in time_steps:
-            prices = price_data.data.loc[time_step].values
+            prices = price_data.loc[time_step].values
 
             z_buy = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
             z_sell = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
@@ -158,7 +158,7 @@ class DirectionalTradingPolicy(TradingPolicy):
             self.vprint(e)
             return (
                 pd.Series(index=portfolio.index, data=0, name=t),
-                price_data.current @ portfolio[:-1] + portfolio[-1],
+                price_data.loc[t] @ portfolio[:-1] + portfolio[-1],
             )
         assert (np.round(self.p_vals[0]) >= 0).all()
         del m
@@ -199,7 +199,7 @@ class ColumnGenerationPolicy(TradingPolicy):
         p = portfolio.values[:-1]  # portfolio of number of positions
         current_cash = portfolio.values[-1]  # cash amount
 
-        value = price_data.current @ p + current_cash
+        value = price_data.loc[t] @ p + current_cash
         assert value > 0.0
         self.vprint(f"Current Portfolio Value at {t}: {value}")
         prob_arr = []
@@ -216,26 +216,26 @@ class ColumnGenerationPolicy(TradingPolicy):
         buy_constraint = (difference >= 0) * 1
         F = self.F
 
-        returns = price_data.data.pct_change().fillna(0) + 1
+        returns = price_data.pct_change().fillna(0) + 1
 
         port_value_bounds = value * returns.max(axis=1).cumprod()
 
         p_next = None
         m = gp.Model(env=env)
-        time_steps = price_data.data.index
+        time_steps = price_data.index
         n_timesteps = len(time_steps)
         cash = current_cash
-        buy_enumerations = self.get_possible_enumerations(portfolio, price_data.data, mode="buy")  # [LxNxT]
+        buy_enumerations = self.get_possible_enumerations(portfolio, price_data, mode="buy")  # [LxNxT]
         lambda_buy = m.addMVar((buy_enumerations.shape[0],), vtype=GRB.BINARY)
 
         if self.sell_switch:
-            sell_enumerations = self.get_possible_enumerations(portfolio, price_data.data, mode="sell")  # [KxNxT]
+            sell_enumerations = self.get_possible_enumerations(portfolio, price_data, mode="sell")  # [KxNxT]
             lambda_sell = m.addMVar((sell_enumerations.shape[0]), vtype=GRB.BINARY)
             m.addConstr(sum(lambda_sell) == 1)
         m.addConstr(sum(lambda_buy) == 1)
 
         for i, time_step in enumerate(time_steps):
-            prices = price_data.data.loc[time_step].values
+            prices = price_data.loc[time_step].values
 
             z_buy = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
             z_sell = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
@@ -317,7 +317,7 @@ class ColumnGenerationPolicy(TradingPolicy):
             self.vprint(e)
             return (
                 pd.Series(index=portfolio.index, data=0, name=t),
-                price_data.current @ portfolio[:-1] + portfolio[-1],
+                price_data.loc[t] @ portfolio[:-1] + portfolio[-1],
             )
         assert (np.round(self.p_vals[0]) >= 0).all()
         del m

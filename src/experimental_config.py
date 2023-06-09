@@ -181,7 +181,7 @@ class ExperimentInfo:
         stocks (list): List of stocks to use in the experiment
         pct_variance (pd.Series): Percentage of variance explained by each stock
         initial_prices (pd.Series): Initial prices of the stocks
-        forecasts (pd.DataFrame): Forecasts for the stocks
+        forecast (pd.DataFrame): Forecast model for the stocks
         errors (pd.DataFrame): Errors for the stocks
         average_error (float): Average error for the stocks
         budget (int): Budget for the experiment
@@ -234,7 +234,7 @@ class ExperimentInfo:
         self.stocks = None
         self.pct_variance = None
         self.initial_prices = None
-        self.forecasts = None
+        self.forecast = None
         self.errors = None
         self.average_error = None
         self.budget = None
@@ -396,6 +396,7 @@ class ExperimentInfo:
         )
 
     def create_forecasts(self, time_series, subset, train, val, cov_ts):
+        # TODO: Move this to forecasting.py
         model = NHiTSModel(
             input_chunk_length=self.lookback,
             output_chunk_length=30,
