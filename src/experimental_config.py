@@ -177,6 +177,8 @@ class ExperimentInfo:
         max_horizon: int,
         min_num_stocks: int,
         max_num_stocks: int,
+        min_tx_cost: int,
+        max_tx_cost: int,
     ):
         """Create an experiment
 
@@ -195,7 +197,7 @@ class ExperimentInfo:
         self.lookback = lookback
         self.horizon = self.rng.integers(min_horizon, max_horizon)
         self.number_of_stocks = self.rng.integers(min_num_stocks, max_num_stocks)
-        self.trading_cost = self.rng.integers(2, 10)
+        self.trading_cost = self.rng.integers(min_tx_cost, max_tx_cost)
 
         # None variables
         self.num_stocks = None
@@ -218,7 +220,7 @@ class ExperimentInfo:
 
     # Make a function that accepts a list as an input
     def set_stocks(self, stocks: list):
-        assert len(stocks) > 0, "Must have at least one stock"
+        assert stocks, "Must have at least one stock"
         self.stocks = stocks
         self.num_stocks = len(stocks)
 
