@@ -90,6 +90,16 @@ class GBM(Forecast):
         super().__init__(**kwargs)
 
     def update(self, t, tickers, simulations=1000):
+        """Update the forecasted price
+
+        Args:
+            t (datetime): current trading day
+            tickers (list): list of tickers to forecast
+            simulations (int, optional): Number of simulated random walks to generate forecast. Defaults to 1000.
+
+        Returns:
+            DataFrame: DataFrame of forecasted prices
+        """
         t = pd.to_datetime(t)
         rng = np.random.default_rng()
 

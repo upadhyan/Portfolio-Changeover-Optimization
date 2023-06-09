@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from tqdm import trange
 from src.policies import *
+from src.forecasting import *
 
 NAIVE = "Naive"
 RIGID = "RigidDirectional"
@@ -17,10 +18,11 @@ def COL_GEN(switch=True):
 
 
 class MarketSimulator:
-    def __init__(self, experiment: ExperimentInfo, policy: TradingPolicy, verbose=True):
+    def __init__(self, experiment: ExperimentInfo, policy: TradingPolicy, forecast: Forecast, verbose=True):
         self.configuration = experiment
         self.stored_times = experiment.full_trading_times + [experiment.full_trading_times[-1] + pd.Timedelta(days=1)]
         self.policy = policy
+        self.forecast = forecast
         self.historical_trades = None
         self.trading_dict = {}
         self.portfolio_value = []
@@ -48,8 +50,10 @@ class MarketSimulator:
             # Get trade for the previous time step
             t = self.stored_times[i]
             relevant_time = self.stored_times[i - 1] if i > 0 else self.configuration.initial_prices.name
+            t1_forecast = time()
+            price_data = self.forecast.update(t, portfolio.index.tolist())
             t1 = time()
-            trades, value = self.policy.get_trades(portfolio, t)
+            trades, value = self.policy.get_trades(portfolio, t, price_data)
             asset_trades = trades[:-1]
             self.total_trading_cost += ((np.round(asset_trades) != 0) * 1).sum() * self.configuration.trading_cost
             self.total_trades += (np.round(asset_trades) != 0).sum()
@@ -67,10 +71,7 @@ class MarketSimulator:
             gc.collect()
         ## make trade corrections
 
-        if self.check_portfolio(portfolio):
-            self.status = "Complete"
-        else:
-            self.status = "Infeasible"
+        self.status = "Complete" if self.check_portfolio(portfolio) else "Infeasible"
         self.gain = self.evaluate_gain()
 
         return portfolio
@@ -83,14 +84,13 @@ class MarketSimulator:
 
     def _apply_trades(self, portfolio, trades):
         new_portfolio = portfolio + trades
-        if not (np.round(new_portfolio) >= 0).all():
-            # get all items in the list except the last one
-            self.historical_trades = self.historical_trades[:-1]
-            self.portfolio_value = [np.nan] * 3
-            print("Infeasible Trade")
-            return None
-        else:
+        if (np.round(new_portfolio) >= 0).all():
             return new_portfolio
+        # get all items in the list except the last one
+        self.historical_trades = self.historical_trades[:-1]
+        self.portfolio_value = [np.nan] * 3
+        print("Infeasible Trade")
+        return None
 
     def plot_value(self, ax=None, **kwargs):
         if ax is None:

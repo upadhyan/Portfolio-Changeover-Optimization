@@ -166,7 +166,37 @@ class ExperimentalConfig:
 
 
 class ExperimentInfo:
-    """Experiment Class, contains all the information about an experiment, getters, setters, and generators"""
+    """Create an experiment
+
+    Objects:
+        stock_prices (pd.DataFrame): Stock Price Dataframe
+        covariates (pd.DataFrame): Covariance Matrix for the stocks
+        lookback (int): Number of lookback days to use for estimates
+        min_horizon (int): Minimum investment horizon for experiments (hint: set min = max for a fixed value)
+        max_horizon (int): Maximum investment horizon for experiments
+        min_num_stocks (int): Minimum number of stocks to use in experiments (hint: set min = max for a fixed value)
+        max_num_stocks (int): Maximum number of stocks to use in experiments
+        rng (np.random.default_rng): Random number generator
+        number_of_stocks (int): Number of stocks to use in the experiment
+        stocks (list): List of stocks to use in the experiment
+        pct_variance (pd.Series): Percentage of variance explained by each stock
+        initial_prices (pd.Series): Initial prices of the stocks
+        forecasts (pd.DataFrame): Forecasts for the stocks
+        errors (pd.DataFrame): Errors for the stocks
+        average_error (float): Average error for the stocks
+        budget (int): Budget for the experiment
+        initial_portfolio (pd.Series): Initial portfolio for the experiment
+        final_portfolio (pd.Series): Final portfolio for the experiment
+        initial_date (pd.Timestamp): Initial date for the experiment
+        final_date (pd.Timestamp): Final date for the experiment
+        truth (pd.Series): Truth for the experiment
+        initial_portfolio_value (float): Initial portfolio value for the experiment
+        final_portfolio_value (float): Final portfolio value for the experiment
+        returns (pd.Series): Returns for the experiment
+        full_trading_times (pd.Series): Full trading times for the experiment
+        exp_name (str): Name of the experiment
+        exp_id (str): ID of the experiment
+    """
 
     def __init__(
         self,
