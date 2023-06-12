@@ -3,10 +3,12 @@ import pandas as pd
 from abc import ABC, abstractmethod
 import plotly.express as px
 
+from neuralforecast import NeuralForecast
+
 
 class Forecast(ABC):
-    def __init__(self, price_date: pd.DataFrame, lookback: int, horizon: int):
-        self.price_data = price_date
+    def __init__(self, price_data: pd.DataFrame, lookback: int, horizon: int):
+        self.price_data = price_data
         self.lookback = lookback
         self.horizon = horizon
 
@@ -14,17 +16,52 @@ class Forecast(ABC):
     def update(self):
         pass
 
+class NBEATSForecast(Forecast):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.price_data = self.melt_data(self.price_data)
+        self.model = None
+
+    def update(self, t):
+        if self.model is None:
+            self.model = NeuralForecast.load(path='./models/')
+        price_data = self.price_data[self.price_data['ds'] <= t]
+        fcst = self.model.predict(df=price_data).reset_index()
+        fcst = fcst.rename(columns={'PatchTST': 'yhat_patchtst', 'NBEATSx': 'yhat', 'NHITS': 'yhat_nhits'})
+        current_day = self.price_data[self.price_data['ds'] == t]
+        # stack current day with forecast
+        fcst = pd.concat([current_day, fcst], axis=0)
+        fcst = self.unmelt_data(fcst)
+        # get the first n+1 rows
+        fcst = fcst.iloc[:self.horizon+1]
+        return fcst
+
+    def melt_data(self, price_data):
+        price_data.index.name = 'ds'
+        # Convert from wide to long format
+        prices = price_data.reset_index()
+        melted_df = pd.melt(prices, id_vars=['ds'], value_vars=prices.columns[1:], var_name='unique_id', value_name='y')
+        melted_df['ds'] = pd.to_datetime(melted_df['ds'])
+        melted_df = melted_df.sort_values(['unique_id', 'ds'])
+        melted_df = melted_df.reset_index(drop=True)
+        melted_df = melted_df.dropna()
+        return melted_df 
+
+    def unmelt_data(self, price_data):
+        return price_data.pivot(index='ds', columns='ticker', values='yhat')
+
+    
 
 class ABM(Forecast):
     def __init__(self, boost_variance=1, **kwargs):
         self.boost_variance = boost_variance
         super().__init__(**kwargs)
 
-    def update(self, t, tickers, simulations=1000):
+    def update(self, t, simulations=1000):
         t = pd.to_datetime(t)
         rng = np.random.default_rng()
 
-        price_data = self.price_data[tickers]
+        price_data = self.price_data
         price_change = price_data.diff().dropna()
 
         idx = price_change.index.get_indexer([t], method="pad")[0]
@@ -54,12 +91,12 @@ class ABM(Forecast):
 
         p_list = []
 
-        for ticker in tickers:
+        for ticker in price_data.columns:
             S0 = price_data[ticker].iloc[idx]
             p_list.append(self.simulate(S0, mu[ticker], sigma[ticker], dt, self.horizon, simulations))
 
         self.price_est = pd.DataFrame(p_list).T
-        self.price_est.columns = tickers
+        self.price_est.columns = price_data.columns
         self.price_est.index = periods
         return self.price_est
 
