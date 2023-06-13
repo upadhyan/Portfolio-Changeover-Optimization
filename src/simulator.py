@@ -47,9 +47,9 @@ class MarketSimulator:
         portfolio = self.configuration.initial_portfolio.copy()
         if self.verbose:
             print("Starting Simulation")
-            pbar = trange(self.configuration.horizon)
+            pbar = trange(self.configuration.horizon + 1)
         else:
-            pbar = range(self.configuration.horizon)
+            pbar = range(self.configuration.horizon + 1)
         current_time = self.configuration.start_date
         for i in pbar:
             self.starting_portfolios.append(portfolio.copy()) # Save portfolio at the start of the day
@@ -81,7 +81,8 @@ class MarketSimulator:
             gc.collect()
 
             # go to the next day
-            current_time = forecast.index[1]
+            if i < self.configuration.horizon:
+                current_time = forecast.index[1]
 
         self.status = "Complete" if self.check_portfolio(portfolio) else "Infeasible"
         self.gain = self.evaluate_gain()

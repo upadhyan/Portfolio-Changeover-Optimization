@@ -147,6 +147,7 @@ class GBM(Forecast):
         super().__init__(**kwargs)
 
     def update(self, t, horizon, simulations=1000):
+        print(self.price_data.loc[t:t + pd.Timedelta(days=horizon)])
         """Update the forecasted price
 
         Args:
@@ -196,6 +197,7 @@ class GBM(Forecast):
         self.price_est = pd.DataFrame(p_list).T
         self.price_est.columns = price_data.columns
         self.price_est.index = periods
+        print(self.price_est)
         return self.price_est
 
     def simulate(self, S0, mu, sigma, dt, num_steps, simulations):
@@ -206,7 +208,7 @@ class GBM(Forecast):
         S = np.zeros(shape=(num_steps + 1, simulations))
         S[0] = S0 * np.ones(simulations)
 
-        print(mu * dt, sigma * np.sqrt(dt))
+        #print(mu * dt, sigma * np.sqrt(dt))
 
         S[1:, :] = np.exp((mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * Z)
         S = S.cumprod(axis=0)
