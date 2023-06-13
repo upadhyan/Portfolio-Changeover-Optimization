@@ -243,6 +243,9 @@ def generate_experiments(
     # Load the stock price data
     stock_price_df = pd.read_parquet(price_data_dir)
     
+    # re-index the stock price data
+    new_index = pd.date_range(start=min(stock_price_df.index), end=max(stock_price_df.index), freq='B')
+    stock_price_df = stock_price_df.reindex(new_index, fill_value=np.nan).interpolate()
 
     rng = np.random.default_rng()
 
