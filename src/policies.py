@@ -43,14 +43,17 @@ class DirectionalTradingPolicy(TradingPolicy):
 
     def get_trades(self, portfolio, t, price_data):
 
+
         env = gp.Env(empty=True)
         env.setParam("OutputFlag", False)
         env.setParam("TimeLimit", 300)
         env.start()
         #######################
         p = portfolio.values[:-1]  # portfolio of number of positions
+        
         current_cash = portfolio.values[-1]  # cash amount
         value = price_data.loc[t] @ p + current_cash
+
         assert value > 0.0
         self.vprint(f"Current Portfolio Value at {t}: {value}")
         prob_arr = []
@@ -59,16 +62,15 @@ class DirectionalTradingPolicy(TradingPolicy):
         p_arr = []
 
         ## Direction Definition
-        initial_portfolio = self.exp.initial_portfolio.copy()[:-1]
+        initial_portfolio = portfolio.copy()[:-1]
         final = self.exp.target_portfolio.copy()[:-1]
+        # final portfolio value
 
         difference = final - initial_portfolio
 
         buy_constraint = (difference >= 0) * 1
         F = self.F
-
         returns = price_data.pct_change().fillna(0) + 1
-
         port_value_bounds = value * returns.max(axis=1).cumprod()
 
         p_next = None
@@ -149,16 +151,19 @@ class DirectionalTradingPolicy(TradingPolicy):
         self.vprint(
             f"\t Optimized. Time taken: {t2 - t1}",
         )
-        try:
-            self.p_vals = [p.getValue() for p in p_arr]
-            self.cash_vals = [_cash.getValue() for _cash in cash_arr]
-            self.z_vals = [z.getValue() for z in z_arr]
-        except Exception as e:
-            self.vprint(e)
-            return (
-                pd.Series(index=portfolio.index, data=0, name=t),
-                price_data.loc[t] @ portfolio[:-1] + portfolio[-1],
-            )
+        self.p_vals = [p.getValue() for p in p_arr]
+        self.cash_vals = [_cash.getValue() for _cash in cash_arr]
+        self.z_vals = [z.getValue() for z in z_arr]
+        # try:
+        #     self.p_vals = [p.getValue() for p in p_arr]
+        #     self.cash_vals = [_cash.getValue() for _cash in cash_arr]
+        #     self.z_vals = [z.getValue() for z in z_arr]
+        # except Exception as e:
+        #     self.vprint(e)
+        #     return (
+        #         pd.Series(index=portfolio.index, data=0, name=t),
+        #         price_data.loc[t] @ portfolio[:-1] + portfolio[-1],
+        #     )
         assert (np.round(self.p_vals[0]) >= 0).all()
         del m
         del env

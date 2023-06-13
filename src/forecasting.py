@@ -50,6 +50,10 @@ class NBEATSForecast(Forecast):
             fcst = fcst.fillna(method='ffill')
             # get the first n+1 rows
             fcst = fcst.iloc[:horizon+1]
+            # sort the columns alphabetically
+            tickers = fcst.columns
+            tickers.sort_values(ascending=True)
+            fcst = fcst[tickers]
         return fcst
 
     def melt_data(self, price_data):

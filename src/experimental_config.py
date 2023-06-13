@@ -149,9 +149,11 @@ class ExperimentInfo:
 
         # Configure experiment
         self.choose_tickers(stock_prices)
+        # order self.tickers alphabetically
+        self.tickers.sort()
         stock_prices = stock_prices[self.tickers]
         self.create_portfolios(stock_prices)
-
+        
         self.forecast_model = self.MODEL_DICT[forecast_model](price_data = stock_prices[self.tickers], 
                                                               lookback=self.lookback, 
                                                               horizon=self.horizon)
@@ -161,9 +163,10 @@ class ExperimentInfo:
     def choose_tickers(self, stock_prices):
         # subset the stock prices to a year before the start date and 90 days after the start date
         subset_prices = stock_prices.loc[self.start_date - pd.Timedelta(days=365) : self.start_date + pd.Timedelta(days=90)]
+        # replace 0 values with nan
+        subset_prices = subset_prices.replace(0, np.nan)
         # drop columns with nan or zero values
         subset_prices = subset_prices.dropna(axis=1)
-        subset_prices = subset_prices.loc[:, (subset_prices != 0).any(axis=0)]
         tickers = subset_prices.columns.tolist()
         # choose a random number of stocks between 5 and 30
         rng = np.random.default_rng()
@@ -183,9 +186,11 @@ class ExperimentInfo:
             initial_portfolio = initial_portfolio.add(purchase)
             purchase = pd.Series(0, index=self.tickers)
         leftover_cash = self.budget - initial_portfolio @ self.initial_prices
+        # order the initial portfolio alphabetically
+        initial_portfolio = initial_portfolio.sort_index(ascending=True)
         initial_portfolio['cash'] = leftover_cash
         self.initial_portfolio = initial_portfolio
-
+        
 
         # create a random target portfolio with a budget using the current prices
         target = pd.Series(0, index=self.tickers)
@@ -195,6 +200,8 @@ class ExperimentInfo:
             if purchase @ self.initial_prices + target @ self.initial_prices > self.budget:
                 break
             target += purchase
+        # order the target portfolio alphabetically
+        target = target.sort_index(ascending=True)
         target['cash'] = leftover_cash
         self.target_portfolio = target
 

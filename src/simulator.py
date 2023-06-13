@@ -49,7 +49,7 @@ class MarketSimulator:
             print("Starting Simulation")
             pbar = trange(self.configuration.horizon)
         else:
-            pbar = range(len(self.configuration.horizon))
+            pbar = range(self.configuration.horizon)
         current_time = self.configuration.start_date
         for i in pbar:
             self.starting_portfolios.append(portfolio.copy()) # Save portfolio at the start of the day
@@ -89,7 +89,7 @@ class MarketSimulator:
         return portfolio
 
     def check_portfolio(self, portfolio):
-        return (np.round(portfolio) >= self.configuration.final_portfolio).all()
+        return (np.round(portfolio) >= self.configuration.target_portfolio).all()
 
     def evaluate_gain(self):
         return (self.portfolio_value[-1] - self.portfolio_value[0]) / self.portfolio_value[0]
