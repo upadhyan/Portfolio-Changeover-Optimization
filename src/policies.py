@@ -42,6 +42,7 @@ class DirectionalTradingPolicy(TradingPolicy):
         self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.tx_cost
 
     def get_trades(self, portfolio, t, price_data):
+
         env = gp.Env(empty=True)
         env.setParam("OutputFlag", False)
         env.setParam("TimeLimit", 300)
@@ -49,7 +50,6 @@ class DirectionalTradingPolicy(TradingPolicy):
         #######################
         p = portfolio.values[:-1]  # portfolio of number of positions
         current_cash = portfolio.values[-1]  # cash amount
-
         value = price_data.loc[t] @ p + current_cash
         assert value > 0.0
         self.vprint(f"Current Portfolio Value at {t}: {value}")

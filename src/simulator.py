@@ -67,7 +67,7 @@ class MarketSimulator:
             # Apply Trades
             t3 = time()
             asset_trades = trades[:-1]
-            self.total_trading_cost += ((np.round(asset_trades) != 0) * 1).sum() * self.configuration.trading_cost
+            self.total_trading_cost += ((np.round(asset_trades) != 0) * 1).sum() * self.configuration.tx_cost
             self.total_trades += (np.round(asset_trades) != 0).sum()
             portfolio = self._apply_trades(portfolio, trades)
 

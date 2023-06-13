@@ -5,6 +5,18 @@ import plotly.express as px
 
 from neuralforecast import NeuralForecast
 
+import sys
+import os
+
+
+class HiddenPrints:
+    def __enter__(self):
+        self._original_stdout = sys.stdout
+        sys.stdout = open(os.devnull, 'w')
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        sys.stdout.close()
+        sys.stdout = self._original_stdout
 
 class Forecast(ABC):
     def __init__(self, price_data: pd.DataFrame, lookback: int, horizon: int):
@@ -22,17 +34,22 @@ class NBEATSForecast(Forecast):
         self.model = None
 
     def update(self, t, horizon):
-        if self.model is None:
-            self.model = NeuralForecast.load(path='./models/')
-        price_data = self.price_data[self.price_data['ds'] <= t]
-        fcst = self.model.predict(df=price_data).reset_index()
-        fcst = fcst.rename(columns={'PatchTST': 'yhat_patchtst', 'NBEATSx': 'yhat', 'NHITS': 'yhat_nhits'})
-        current_day = self.price_data[self.price_data['ds'] == t]
-        # stack current day with forecast
-        fcst = pd.concat([current_day, fcst], axis=0)
-        fcst = self.unmelt_data(fcst)
-        # get the first n+1 rows
-        fcst = fcst.iloc[:horizon+1]
+        with HiddenPrints():
+            if self.model is None:
+                self.model = NeuralForecast.load(path='./models/')
+            price_data = self.price_data[self.price_data['ds'] <= t]
+            fcst = self.model.predict(df=price_data).reset_index()
+            fcst = fcst.rename(columns={'PatchTST': 'yhat_patchtst', 'NBEATSx': 'yhat', 'NHITS': 'yhat_nhits'})
+            current_day = self.price_data[self.price_data['ds'] == t].copy()
+            current_day = current_day.rename(columns={'y': 'yhat'})
+            # stack current day with forecast
+            fcst = pd.concat([current_day, fcst], axis=0)
+            fcst = self.unmelt_data(fcst)
+            # re-index this to ensure the index is continuous with respect to business days
+            fcst = fcst.reindex(pd.date_range(start=fcst.index[0], end=fcst.index[-1], freq='B'))
+            fcst = fcst.fillna(method='ffill')
+            # get the first n+1 rows
+            fcst = fcst.iloc[:horizon+1]
         return fcst
 
     def melt_data(self, price_data):
