@@ -9,14 +9,14 @@ from torch.distributions import Bernoulli, Normal, StudentT, Poisson, NegativeBi
 
 
 
-# Hyperparameter Tuning
-import ray
-from ray import tune
-ray.shutdown()
-ray.init(num_cpus=20, num_gpus=1)
-## set raytune working directory os variable
-import os
-os.environ['TUNE_ORIG_WORKING_DIR'] = os.getcwd()
+# # Hyperparameter Tuning
+# import ray
+# from ray import tune
+# ray.shutdown()
+# ray.init(num_cpus=20, num_gpus=1)
+# ## set raytune working directory os variable
+# import os
+# os.environ['TUNE_ORIG_WORKING_DIR'] = os.getcwd()
 
 
 from neuralforecast.models import NHITS, NBEATSx, PatchTST
@@ -106,10 +106,11 @@ class HuberLoss(torch.nn.Module):
 DEFAULT_HP_NBEATSx = {
                 "h": HORIZON,
                 "input_size": HORIZON,
-                "loss": HuberLoss(),
+                "loss": MAE(),
                 "max_steps": 1000,
                 "stack_types": ['trend', 'seasonality', 'identity'],
-                "n_polynomials": 4,
+                "n_polynomials": 5,
+                "n_harmonics": 10,
                 "n_blocks": [1, 1, 1],
                 "mlp_units": [[512, 512],[512, 512], [512, 512]],
                 "val_check_steps": 10,
@@ -119,31 +120,31 @@ DEFAULT_HP_NBEATSx = {
 
 DEFAULT_HP_NHITS = {
                 "h": HORIZON,
-                "loss": HuberLoss(),
+                "loss": MAE(),
                 "input_size": HORIZON,
                 "step_size": HORIZON,
                 "alias": 'NHITS'
 }
 
 
-DEFAULT_AUTO_NBEATSx = {
-    "input_size": tune.qrandint(HORIZON, 3 * HORIZON, HORIZON),
-    "n_harmonics": tune.qrandint(1, 4, 1),
-    "n_polynomials": tune.qrandint(1, 10, 1),
-    "learning_rate": tune.loguniform(1e-5, 1e-1),
-    "batch_size": tune.qrandint(32, 512, 32),
-}
+# DEFAULT_AUTO_NBEATSx = {
+#     "input_size": tune.qrandint(HORIZON, 3 * HORIZON, HORIZON),
+#     "n_harmonics": tune.qrandint(1, 4, 1),
+#     "n_polynomials": tune.qrandint(1, 10, 1),
+#     "learning_rate": tune.loguniform(1e-5, 1e-1),
+#     "batch_size": tune.qrandint(32, 512, 32),
+# }
 
-DEFAULT_AUTO_PATCHTST = {
-    "input_size": tune.qrandint(HORIZON, 3 * HORIZON, HORIZON),
-    "encoder_layers": tune.qrandint(2, 4, 1),
-    "batch_normalization": tune.choice([True, False]),
-    "learning_rate": tune.loguniform(1e-5, 1e-1),
-    "batch_size": tune.qrandint(32, 512, 32),
-    "res_attention": tune.choice([True, False]),
-    "linear_hidden_size": tune.qrandint(32, 256, 32),
-    "stride": tune.qrandint(4, 32, 4),
-}
+# DEFAULT_AUTO_PATCHTST = {
+#     "input_size": tune.qrandint(HORIZON, 3 * HORIZON, HORIZON),
+#     "encoder_layers": tune.qrandint(2, 4, 1),
+#     "batch_normalization": tune.choice([True, False]),
+#     "learning_rate": tune.loguniform(1e-5, 1e-1),
+#     "batch_size": tune.qrandint(32, 512, 32),
+#     "res_attention": tune.choice([True, False]),
+#     "linear_hidden_size": tune.qrandint(32, 256, 32),
+#     "stride": tune.qrandint(4, 32, 4),
+# }
 
  
 
@@ -155,26 +156,23 @@ def load_data(stock_price_data_path = "raw_data/spx_stock_prices.parquet"):
     # replace zeros with nan
     prices = prices.replace(0, np.nan)
     # name the index
-    
+    prices.index.name = 'ds'
+    # Convert from wide to long format
+    prices = prices.reset_index()
+    print(prices.head())
+    melted_df = pd.melt(prices, id_vars=['ds'], value_vars=prices.columns[1:], var_name='unique_id', value_name='y')
+    melted_df['ds'] = pd.to_datetime(melted_df['ds'])
+    melted_df = melted_df.sort_values(['unique_id', 'ds'])
+    melted_df = melted_df.reset_index(drop=True)
+    melted_df = melted_df.dropna()
+    return melted_df
 
 def train_model(train_dataset):
-    models = [NBEATSx(**DEFAULT_HP_NBEATSx), NHITS(**DEFAULT_HP_NHITS)]
+    models = [NBEATSx(**DEFAULT_HP_NBEATSx)]
     nf = NeuralForecast(models=models, freq='B')
     nf.fit(df=train_dataset)
     return nf
 
-def train_auto_model(train_dataset):
-    models = [AutoNBEATSx(h = HORIZON, 
-                          loss = HuberLoss(),
-                          config = DEFAULT_AUTO_NBEATSx,
-                          num_samples=10)] 
-    # , 
-    #         AutoPatchTST(h=HORIZON,
-    #                      loss=MAE(),
-    #                      config=DEFAULT_AUTO_PATCHTST)
-    nf = NeuralForecast(models=models, freq='B')
-    nf.fit(df=train_dataset)
-    return nf
 
 def retrieve_valid_tickers(melted_data, split_date):
     first_date_df = melted_data.groupby('unique_id')['ds'].min().reset_index()
@@ -198,7 +196,7 @@ def retrieve_valid_tickers(melted_data, split_date):
 
 if __name__ == "__main__":
     melted_df = load_data()
-
+    print(melted_df.head())
     split_date = '2018-01-01'
     valid_tickers_numb = retrieve_valid_tickers(melted_df, split_date)
     
@@ -215,7 +213,7 @@ if __name__ == "__main__":
     valid_ticker_df = melted_df[melted_df['unique_id'].isin(valid_tickers_numb)]
     Y_train_df = valid_ticker_df[valid_ticker_df['ds'] < split_date]
     nf = train_model(Y_train_df)
-    nf.save(path='./nf_models/',
+    nf.save(path='./models/',
         model_index=None, 
         overwrite=True,
         save_dataset=True)

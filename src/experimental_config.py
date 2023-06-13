@@ -12,7 +12,7 @@ import os
 import logging
 import gc
 
-from forecasting import NBEATSForecast, ABM, GBM
+from src.forecasting import NBEATSForecast, ABM, GBM
 
 torch.set_float32_matmul_precision("medium")
 logging.getLogger("pytorch_lightning.utilities.rank_zero").setLevel(logging.WARNING)
@@ -55,116 +55,6 @@ class PriceData:
     def convert_from_long(data):
         # TODO: columns: tickers, data: values, index: date
         pass
-
-
-class ExperimentalConfig:
-    def __init__(
-        self,
-        budget: int,
-        stocks: list,
-        trading_cost: int,
-        horizon: int,
-        starting_step: pd.Timestamp,
-        initial_portfolio: pd.Series,
-        target_portfolio: pd.Series,
-        data_file: str,
-        model_directory: str = "./models",
-    ):
-        """_summary_
-
-        Args:
-            budget (int): _description_
-            stocks (list): _description_
-            trading_cost (int): _description_
-            horizon (int): _description_
-            starting_step (pd.Timestamp): _description_
-            initial_portfolio (pd.Series): _description_
-            target_portfolio (pd.Series): _description_
-            data_file (str): _description_
-            model_directory (str, optional): _description_. Defaults to "./models".
-        """
-        self.budget = budget
-        self.stocks = stocks
-        self.trading_cost = trading_cost
-        self.horizon = horizon
-        self.starting_step = starting_step
-        self.initial_portfolio = initial_portfolio
-        self.target_portfolio = target_portfolio
-        self.data_file = data_file
-        self.model_directory = model_directory
-        self.num_stocks = len(self.stocks)
-
-    @staticmethod
-    def create_config(
-        budget: int = random.randint(5000, 350000),
-        stocks: list = None,
-        num_stocks: int = random.randint(5, 30),
-        trading_cost: int = random.randint(2, 10),
-        horizon: int = random.randint(30, 90),
-        starting_step: pd.Timestamp = None,
-        data_file: str = "./raw_data/spx_stock_prices.parquet",
-        model_directory: str = "./models",
-    ):
-        """
-        Args:
-            budget: The budget for the experiment
-            stocks: The stocks to use in the experiment
-            num_stocks: The number of stocks to use in the experiment
-            trading_cost: The trading cost for the experiment
-            horizon: The horizon for the experiment
-            starting_step: The starting step for the experiment
-            data_file: The file to load the data from
-            model_directory: The directory to load the models from
-        """
-
-        # load the data
-        stock_prices = pd.read_parquet(data_file)
-        stock_prices = stock_prices.loc["2018-01-01":"2022-03-01"]
-        # drop columns with nan values
-        stock_prices = stock_prices.dropna(axis=1)
-
-        if stocks is None:
-            stocks = stock_prices.columns.tolist()
-            stocks = random.sample(stocks, num_stocks)
-        assert set(stocks).issubset(stock_prices.columns.tolist()), "Stocks must be in the data"
-
-        # choose a random starting step
-        if starting_step is None:
-            starting_step = random.choice(stock_prices.index[: -(horizon + 1)])
-        assert (
-            starting_step in stock_prices.index[:-horizon]
-        ), f"Starting step must be in the data at least {horizon + 1} days before the end of the data"
-        current_prices = stock_prices.loc[starting_step, stocks]
-        initial_portfolio = pd.Series(0, index=stocks)
-        add = pd.Series(0, index=stocks)
-        # create a random initial portfolio with a budget using the current prices
-        while initial_portfolio @ current_prices < budget:
-            add[random.choice(stocks)] += 1
-            if add @ current_prices + initial_portfolio @ current_prices > budget:
-                break
-            initial_portfolio += add
-            add = pd.Series(0, index=stocks)
-
-        target_portfolio = pd.Series(0, index=stocks)
-        add = pd.Series(0, index=stocks)
-        # create a random initial portfolio with a budget using the current prices
-        while target_portfolio @ current_prices < budget:
-            add[random.choice(stocks)] += 1
-            if add @ current_prices + target_portfolio @ current_prices > budget:
-                break
-            target_portfolio += add
-            add = pd.Series(0, index=stocks)
-        return ExperimentalConfig(
-            budget=budget,
-            stocks=stocks,
-            trading_cost=trading_cost,
-            horizon=horizon,
-            starting_step=starting_step,
-            initial_portfolio=initial_portfolio,
-            target_portfolio=target_portfolio,
-            data_file=data_file,
-            model_directory=model_directory,
-        )
 
 
 class ExperimentInfo:
@@ -238,7 +128,7 @@ class ExperimentInfo:
         assert tx_cost >= 0, "Transaction cost must be greater or equal to 0"
         assert num_stocks <= stock_prices.shape[1], "Number of stocks must be less than or equal to the number of stocks in the data"
         assert horizon <= stock_prices.shape[0], "Horizon must be less than or equal to the number of days in the data"
-        assert date > pd.Timestamp("2019-01-01"), "Date must be after 2019-01-01"
+        assert date > pd.Timestamp("2018-01-01"), "Date must be after 2018-01-01"
         assert budget > 0, "Budget must be greater than 0"
         
         # Set variables
@@ -279,30 +169,33 @@ class ExperimentInfo:
         rng = np.random.default_rng()
         self.tickers = rng.choice(tickers, size=self.num_stocks, replace=False)
 
-    def create_portfolios(self):
+    def create_portfolios(self, stock_prices):
         rng  = np.random.default_rng()
         # get stock prices on the start date for the chosen tickers
-        self.initial_prices = self.stock_prices.loc[self.start_date]
+        self.initial_prices = stock_prices.loc[self.start_date]
         initial_portfolio = pd.Series(0, index=self.tickers)
         purchase = pd.Series(0, index=self.tickers)
-        increment = int(self.budget / (10 * self.initial_prices.mean()))
         # create a random initial portfolio with a budget using the current prices
         while initial_portfolio @ self.initial_prices < self.budget:
-            purchase[rng.choice(self.tickers)] += increment
+            purchase[rng.choice(self.tickers)] += rng.integers(1, 5)
             if purchase @ self.initial_prices + initial_portfolio @ self.initial_prices > self.budget:
                 break
             initial_portfolio = initial_portfolio.add(purchase)
             purchase = pd.Series(0, index=self.tickers)
+        leftover_cash = self.budget - initial_portfolio @ self.initial_prices
+        initial_portfolio['cash'] = leftover_cash
         self.initial_portfolio = initial_portfolio
+
 
         # create a random target portfolio with a budget using the current prices
         target = pd.Series(0, index=self.tickers)
         purchase = pd.Series(0, index=self.tickers)
         while target @ self.initial_prices < self.budget:
-            purchase[rng.choice(self.tickers)] += increment
+            purchase[rng.choice(self.tickers)] += rng.integers(1, 5)
             if purchase @ self.initial_prices + target @ self.initial_prices > self.budget:
                 break
             target += purchase
+        target['cash'] = leftover_cash
         self.target_portfolio = target
 
     def generate_exp_id(self):
@@ -362,7 +255,7 @@ def generate_experiments(
             number_of_stocks = rng.integers(min_num_stocks, max_num_stocks)
             trading_cost = rng.integers(min_tx_cost, max_tx_cost)
             budget = np.round(rng.uniform(min_budget, max_budget), 2)
-            temp = stock_price_df.loc['2019-01-01':]
+            temp = stock_price_df.loc['2018-01-01':]
             start_date = rng.choice(temp.index[:-horizon])
             # Create an experiment
             exp = ExperimentInfo(
@@ -383,19 +276,5 @@ def generate_experiments(
         except ExperimentGenerationError as e:
             pbar.set_description(f"Experiment {i} failed with error {e}.")
 
-if __name__ == "__main__":
-    generate_experiments(
-        price_data_dir = './raw_data/spx_stock_prices.parquet',
-        covariates = None,
-        num_experiments = 10,
-        output_dir = './experiments',
-        min_horizon = 30,
-        max_horizon = 90,
-        max_num_stocks = 30,
-        min_num_stocks = 5,
-        min_tx_cost = 2,
-        max_tx_cost = 10,
-        max_budget = 350000,
-        min_budget = 5000,
-        forecast_model='GBM'
-    )
+
+

@@ -3,6 +3,7 @@ import numpy as np
 from tqdm import trange
 from src.policies import *
 from src.forecasting import *
+from src.experimental_config import *
 
 NAIVE = "Naive"
 RIGID = "RigidDirectional"
@@ -18,11 +19,13 @@ def COL_GEN(switch=True):
 
 
 class MarketSimulator:
-    def __init__(self, experiment: ExperimentInfo, policy: TradingPolicy, forecast: Forecast, verbose=True):
-        self.configuration = experiment
-        self.stored_times = experiment.full_trading_times + [experiment.full_trading_times[-1] + pd.Timedelta(days=1)]
+    def __init__(self, configuration: ExperimentInfo, policy: TradingPolicy, verbose=True):
+        self.configuration = configuration
         self.policy = policy
-        self.forecast = forecast
+        self.verbose = verbose
+        self.status = "Not Run"
+
+
         self.historical_trades = None
         self.trading_dict = {}
         self.portfolio_value = []
@@ -31,8 +34,8 @@ class MarketSimulator:
         self.forecast_times = []
         self.verbose = verbose
         self.gain = 0
-        self.status = "Not Run"
-        self.current_portfolio = None
+        
+        self.starting_portfolios = []
         self.historical_portfolios = []
         self.total_trading_cost = 0
         self.total_trades = 0
@@ -44,39 +47,45 @@ class MarketSimulator:
         portfolio = self.configuration.initial_portfolio.copy()
         if self.verbose:
             print("Starting Simulation")
-            pbar = trange(len(self.stored_times))
+            pbar = trange(self.configuration.horizon)
         else:
-            pbar = range(len(self.stored_times))
+            pbar = range(len(self.configuration.horizon))
+        current_time = self.configuration.start_date
         for i in pbar:
-            # Get trade for the previous time step
-            t = self.stored_times[i]
-            relevant_time = self.stored_times[i - 1] if i > 0 else self.configuration.initial_prices.name
-            t1_forecast = time()
-            price_data = self.forecast.update(t, portfolio.index.tolist())
-            t2_forecast = time()
-            self.forecast_times.append(t2_forecast - t1_forecast)
+            self.starting_portfolios.append(portfolio.copy()) # Save portfolio at the start of the day
+
+            horizon = self.configuration.horizon - i # Receding horizon adjustment
+
+            # Get forecast
             t1 = time()
-            trades, value = self.policy.get_trades(portfolio, t, price_data)
+            forecast = self.configuration.forecast_model.update(current_time, horizon)
+            
+            # Run Policy
+            t2 = time()
+            trades, value = self.policy.get_trades(portfolio, current_time, forecast)
+            
+            # Apply Trades
+            t3 = time()
             asset_trades = trades[:-1]
             self.total_trading_cost += ((np.round(asset_trades) != 0) * 1).sum() * self.configuration.trading_cost
             self.total_trades += (np.round(asset_trades) != 0).sum()
-            t2 = time()
-            self.solve_times.append(t2 - t1)
-            # Save Trades
-            self.historical_trades.append(trades)
-            self.trading_dict[relevant_time] = trades
-            # Apply trades
             portfolio = self._apply_trades(portfolio, trades)
-            self.current_portfolio = portfolio
-            self.historical_portfolios.append(portfolio)
-            self.portfolio_value.append(value)
-            self.trading_times.append(relevant_time)
+
+            # Save Trades and Portfolio information
+            self.historical_trades.append(trades)
+            self.trading_dict[current_time] = trades
+
+            self.historical_portfolios.append(portfolio) # Save portfolio at the end of the day
+            self.portfolio_value.append(value) # Save portfolio value at the end of the day
+            self.trading_times.append(current_time)
             gc.collect()
-        ## make trade corrections
+
+            # go to the next day
+            current_time = forecast.index[1]
 
         self.status = "Complete" if self.check_portfolio(portfolio) else "Infeasible"
         self.gain = self.evaluate_gain()
-
+ 
         return portfolio
 
     def check_portfolio(self, portfolio):

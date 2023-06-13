@@ -10,10 +10,9 @@ class Forecast(ABC):
     def __init__(self, price_data: pd.DataFrame, lookback: int, horizon: int):
         self.price_data = price_data
         self.lookback = lookback
-        self.horizon = horizon
 
     @abstractmethod
-    def update(self):
+    def update(self, t, horizon, **kwargs):
         pass
 
 class NBEATSForecast(Forecast):
@@ -22,7 +21,7 @@ class NBEATSForecast(Forecast):
         self.price_data = self.melt_data(self.price_data)
         self.model = None
 
-    def update(self, t):
+    def update(self, t, horizon):
         if self.model is None:
             self.model = NeuralForecast.load(path='./models/')
         price_data = self.price_data[self.price_data['ds'] <= t]
@@ -33,7 +32,7 @@ class NBEATSForecast(Forecast):
         fcst = pd.concat([current_day, fcst], axis=0)
         fcst = self.unmelt_data(fcst)
         # get the first n+1 rows
-        fcst = fcst.iloc[:self.horizon+1]
+        fcst = fcst.iloc[:horizon+1]
         return fcst
 
     def melt_data(self, price_data):
@@ -48,7 +47,7 @@ class NBEATSForecast(Forecast):
         return melted_df 
 
     def unmelt_data(self, price_data):
-        return price_data.pivot(index='ds', columns='ticker', values='yhat')
+        return price_data.pivot(index='ds', columns='unique_id', values='yhat')
 
     
 
@@ -57,7 +56,7 @@ class ABM(Forecast):
         self.boost_variance = boost_variance
         super().__init__(**kwargs)
 
-    def update(self, t, simulations=1000):
+    def update(self, t, horizon, simulations=1000):
         t = pd.to_datetime(t)
         rng = np.random.default_rng()
 
@@ -73,10 +72,10 @@ class ABM(Forecast):
 
         ## ABM params ##
         # numpy objects
-        mu = np.mean(price_observations, axis=0) * self.horizon
+        mu = np.mean(price_observations, axis=0) * horizon
         # cov = np.cov(price_observations, rowvar=False)
         # sigma = np.sqrt(np.diag(cov))
-        sigma = np.std(price_observations, axis=0) * np.sqrt(self.horizon) * self.boost_variance
+        sigma = np.std(price_observations, axis=0) * np.sqrt(horizon) * self.boost_variance
 
         # reshape mu and sigma based on number of simulations
         # mu = np.reshape(mu, (len(tickers), simulations))
@@ -84,16 +83,16 @@ class ABM(Forecast):
         print(np.mean(price_observations, axis=0))
 
         T = 1  # Use this for scaling mu and sigma to horizon if different unit
-        dt = T / self.horizon
+        dt = T / horizon
 
         # time horizon
-        periods = price_change.iloc[idx - 1 : idx + self.horizon].index
+        periods = price_change.iloc[idx - 1 : idx + horizon].index
 
         p_list = []
 
         for ticker in price_data.columns:
             S0 = price_data[ticker].iloc[idx]
-            p_list.append(self.simulate(S0, mu[ticker], sigma[ticker], dt, self.horizon, simulations))
+            p_list.append(self.simulate(S0, mu[ticker], sigma[ticker], dt, horizon, simulations))
 
         self.price_est = pd.DataFrame(p_list).T
         self.price_est.columns = price_data.columns
@@ -126,7 +125,7 @@ class GBM(Forecast):
         self.boost_variance = boost_variance
         super().__init__(**kwargs)
 
-    def update(self, t, tickers, simulations=1000):
+    def update(self, t, horizon, simulations=1000):
         """Update the forecasted price
 
         Args:
@@ -140,8 +139,8 @@ class GBM(Forecast):
         t = pd.to_datetime(t)
         rng = np.random.default_rng()
 
-        price_data = self.price_data[tickers]
-        ret_data = self.price_data[tickers].pct_change().dropna()
+        price_data = self.price_data
+        ret_data = self.price_data.pct_change().dropna()
 
         idx = ret_data.index.get_indexer([t], method="pad")[0]
         end_dt = idx
@@ -152,29 +151,29 @@ class GBM(Forecast):
 
         ## ABM params ##
         # numpy objects
-        mu = np.mean(price_observations, axis=0) * self.horizon
+        mu = np.mean(price_observations, axis=0) * horizon
         # cov = np.cov(price_observations, rowvar=False)
         # sigma = np.sqrt(np.diag(cov))
-        sigma = np.std(price_observations, axis=0) * np.sqrt(self.horizon)
+        sigma = np.std(price_observations, axis=0) * np.sqrt(horizon)
 
         # reshape mu and sigma based on number of simulations
         # mu = np.reshape(mu, (len(tickers), simulations))
         # sigma = np.reshape(sigma, (len(tickers), simulations))
 
         T = 1  # Use this for scaling mu and sigma to horizon if different unit
-        dt = T / self.horizon
+        dt = T / horizon
 
         # time horizon
-        periods = ret_data.iloc[idx - 1 : idx + self.horizon].index
+        periods = ret_data.iloc[idx - 1 : idx + horizon].index
 
         p_list = []
 
-        for ticker in tickers:
+        for ticker in price_data.columns:
             S0 = price_data[ticker].iloc[idx]  # use ret_data if not using exp in simulate
-            p_list.append(self.simulate(S0, mu[ticker], sigma[ticker], dt, self.horizon, simulations))
+            p_list.append(self.simulate(S0, mu[ticker], sigma[ticker], dt, horizon, simulations))
 
         self.price_est = pd.DataFrame(p_list).T
-        self.price_est.columns = tickers
+        self.price_est.columns = price_data.columns
         self.price_est.index = periods
         return self.price_est
 

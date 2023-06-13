@@ -17,7 +17,6 @@ class TradingPolicy(ABC):
             verbose (bool, optional): Defaults to False.
         """
         self.exp = experiment
-        self.trading_times = experiment.full_trading_times + [experiment.full_trading_times[-1] + pd.Timedelta(days=1)]
         self.verbose = verbose
 
     @abstractmethod
@@ -40,7 +39,7 @@ class DirectionalTradingPolicy(TradingPolicy):
             verbose (bool, optional): Defaults to True.
         """
         super().__init__(experiment, verbose, **kwargs)
-        self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.trading_cost
+        self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.tx_cost
 
     def get_trades(self, portfolio, t, price_data):
         env = gp.Env(empty=True)
@@ -61,7 +60,7 @@ class DirectionalTradingPolicy(TradingPolicy):
 
         ## Direction Definition
         initial_portfolio = self.exp.initial_portfolio.copy()[:-1]
-        final = self.exp.final_portfolio.copy()[:-1]
+        final = self.exp.target_portfolio.copy()[:-1]
 
         difference = final - initial_portfolio
 
@@ -128,7 +127,7 @@ class DirectionalTradingPolicy(TradingPolicy):
             cash_arr.append(cash_next)
             p_arr.append(p_next)
 
-        final_p = self.exp.final_portfolio.values[:-1]
+        final_p = self.exp.target_portfolio.values[:-1]
         # Terminal constraint.
         m.addConstr(p_next >= final_p, name="terminal")
 
@@ -187,7 +186,7 @@ class ColumnGenerationPolicy(TradingPolicy):
             sell_switch (bool, optional): When true, it will apply Column Generation method on sell trades. Defaults to True.
         """
         super().__init__(experiment, verbose, **kwargs)
-        self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.trading_cost
+        self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.tx_cost
         self.sell_switch = sell_switch
 
     def get_trades(self, portfolio, t, price_data):
@@ -209,7 +208,7 @@ class ColumnGenerationPolicy(TradingPolicy):
 
         ## Direction Definition
         initial_portfolio = self.exp.initial_portfolio.copy()[:-1]
-        final = self.exp.final_portfolio.copy()[:-1]
+        final = self.exp.target_portfolio.copy()[:-1]
 
         difference = final - initial_portfolio
 
@@ -282,7 +281,7 @@ class ColumnGenerationPolicy(TradingPolicy):
             cash_arr.append(cash_next)
             p_arr.append(p_next)
 
-        final_p = self.exp.final_portfolio.values[:-1]
+        final_p = self.exp.target_portfolio.values[:-1]
         # Terminal constraint.
         m.addConstr(p_next >= final_p, name="terminal")
 
@@ -334,7 +333,7 @@ class ColumnGenerationPolicy(TradingPolicy):
         # Get the current portfolio
         p = portfolio.values[:-1]
         current_cash = portfolio.values[-1]
-        p_final = self.exp.final_portfolio.values[:-1]
+        p_final = self.exp.target_portfolio.values[:-1]
         # prices = trading_information.loc[time_step].values
 
         p_diff = p_final - p
@@ -380,7 +379,7 @@ class DirectionalPenaltyTradingPolicy(TradingPolicy):
             lambda_ (float, optional): Penalty importance in the objective. Defaults to 0.5.
         """
         super().__init__(experiment, verbose, **kwargs)
-        self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.trading_cost
+        self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.tx_cost
         self.lambda_ = lambda_
 
     def get_trades(self, portfolio, t):
@@ -403,7 +402,7 @@ class DirectionalPenaltyTradingPolicy(TradingPolicy):
 
         ## Direction Definition
         initial_portfolio = portfolio.copy()[:-1]
-        final = self.exp.final_portfolio.copy()[:-1]
+        final = self.exp.target_portfolio.copy()[:-1]
 
         difference = final - initial_portfolio
 
@@ -465,7 +464,7 @@ class DirectionalPenaltyTradingPolicy(TradingPolicy):
             cash_arr.append(cash_next)
             p_arr.append(p_next)
 
-        final_p = self.exp.final_portfolio.values[:-1]
+        final_p = self.exp.target_portfolio.values[:-1]
         # Terminal constraint.
         m.addConstr(p_next >= final_p, name="terminal")
 
@@ -520,7 +519,7 @@ class NaivePolicy(TradingPolicy):
         """
         super().__init__(experiment, verbose, **kwargs)
         self.initial = True
-        self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.trading_cost
+        self.F = np.ones(self.exp.initial_portfolio.values[:-1].shape) * self.exp.tx_cost
 
     def get_trades(self, portfolio, t):
         if not self.initial:
@@ -576,7 +575,7 @@ class NaivePolicy(TradingPolicy):
 
         obj = prices @ p_next - F @ y_sell - F @ y_buy
 
-        final_p = self.exp.final_portfolio.values[:-1]
+        final_p = self.exp.target_portfolio.values[:-1]
         # Terminal constraint.
         m.addConstr(p_next >= final_p)
 
