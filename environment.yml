@@ -19,6 +19,7 @@ dependencies:
   - tqdm
   - pip
   - pyarrow>=7.0.0
+  - ipywidgets
   - pip:
       - nbdev
       - black

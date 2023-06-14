@@ -53,7 +53,6 @@ class DirectionalTradingPolicy(TradingPolicy):
         
         current_cash = portfolio.values[-1]  # cash amount
         value = price_data.loc[t] @ p + current_cash
-
         assert value > 0.0
         self.vprint(f"Current Portfolio Value at {t}: {value}")
         prob_arr = []
@@ -65,7 +64,8 @@ class DirectionalTradingPolicy(TradingPolicy):
         initial_portfolio = portfolio.copy()[:-1]
         final = self.exp.target_portfolio.copy()[:-1]
         # final portfolio value
-
+        final_value = price_data.loc[t] @ final
+        # difference between final and initial portfolio
         difference = final - initial_portfolio
 
         buy_constraint = (difference >= 0) * 1
@@ -151,19 +151,19 @@ class DirectionalTradingPolicy(TradingPolicy):
         self.vprint(
             f"\t Optimized. Time taken: {t2 - t1}",
         )
-        self.p_vals = [p.getValue() for p in p_arr]
-        self.cash_vals = [_cash.getValue() for _cash in cash_arr]
-        self.z_vals = [z.getValue() for z in z_arr]
-        # try:
-        #     self.p_vals = [p.getValue() for p in p_arr]
-        #     self.cash_vals = [_cash.getValue() for _cash in cash_arr]
-        #     self.z_vals = [z.getValue() for z in z_arr]
-        # except Exception as e:
-        #     self.vprint(e)
-        #     return (
-        #         pd.Series(index=portfolio.index, data=0, name=t),
-        #         price_data.loc[t] @ portfolio[:-1] + portfolio[-1],
-        #     )
+        # self.p_vals = [p.getValue() for p in p_arr]
+        # self.cash_vals = [_cash.getValue() for _cash in cash_arr]
+        # self.z_vals = [z.getValue() for z in z_arr]
+        try:
+            self.p_vals = [p.getValue() for p in p_arr]
+            self.cash_vals = [_cash.getValue() for _cash in cash_arr]
+            self.z_vals = [z.getValue() for z in z_arr]
+        except Exception as e:
+            self.vprint(e)
+            return (
+                pd.Series(index=portfolio.index, data=0, name=t),
+                price_data.loc[t] @ portfolio[:-1] + portfolio[-1],
+            )
         assert (np.round(self.p_vals[0]) >= 0).all()
         del m
         del env
