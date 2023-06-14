@@ -4,7 +4,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
-
 import pickle
 import random
 from tqdm import trange
@@ -89,11 +88,8 @@ class ExperimentInfo:
         exp_name (str): Name of the experiment
         exp_id (str): ID of the experiment
     """
-    MODEL_DICT = {
-        "GBM": GBM,
-        "ABM": ABM,
-        "NBEATS": NBEATSForecast
-    }
+
+    MODEL_DICT = {"GBM": GBM, "ABM": ABM, "NBEATS": NBEATSForecast}
 
     def __init__(
         self,
@@ -105,7 +101,8 @@ class ExperimentInfo:
         num_stocks: int,
         tx_cost: int,
         date: pd.Timestamp,
-        forecast_model: str
+        forecast_model: str,
+        forecast_params: dict,
     ):
         """Create an experiment
 
@@ -126,11 +123,13 @@ class ExperimentInfo:
         assert horizon > 0, "Horizon must be greater than 0"
         assert num_stocks > 0, "Number of stocks must be greater than 0"
         assert tx_cost >= 0, "Transaction cost must be greater or equal to 0"
-        assert num_stocks <= stock_prices.shape[1], "Number of stocks must be less than or equal to the number of stocks in the data"
+        assert (
+            num_stocks <= stock_prices.shape[1]
+        ), "Number of stocks must be less than or equal to the number of stocks in the data"
         assert horizon <= stock_prices.shape[0], "Horizon must be less than or equal to the number of days in the data"
         assert date > pd.Timestamp("2018-01-01"), "Date must be after 2018-01-01"
         assert budget > 0, "Budget must be greater than 0"
-        
+
         # Set variables
         self.num_stocks = num_stocks
         self.tx_cost = tx_cost
@@ -145,7 +144,6 @@ class ExperimentInfo:
         self.initial_portfolio = None
         self.target_portfolio = None
         self.initial_prices = None
-        
 
         # Configure experiment
         self.choose_tickers(stock_prices)
@@ -153,16 +151,21 @@ class ExperimentInfo:
         self.tickers.sort()
         stock_prices = stock_prices[self.tickers]
         self.create_portfolios(stock_prices)
-        
-        self.forecast_model = self.MODEL_DICT[forecast_model](price_data = stock_prices[self.tickers], 
-                                                              lookback=self.lookback, 
-                                                              horizon=self.horizon)
+
+        self.forecast_model = self.MODEL_DICT[forecast_model](
+            price_data=stock_prices[self.tickers],
+            lookback=self.lookback,
+            horizon=self.horizon,
+            **forecast_params,
+        )
         ## generate experiment id
         self.generate_exp_id()
-        
+
     def choose_tickers(self, stock_prices):
         # subset the stock prices to a year before the start date and 90 days after the start date
-        subset_prices = stock_prices.loc[self.start_date - pd.Timedelta(days=365) : self.start_date + pd.Timedelta(days=90)]
+        subset_prices = stock_prices.loc[
+            self.start_date - pd.Timedelta(days=365) : self.start_date + pd.Timedelta(days=90)
+        ]
         # replace 0 values with nan
         subset_prices = subset_prices.replace(0, np.nan)
         # drop columns with nan or zero values
@@ -173,7 +176,7 @@ class ExperimentInfo:
         self.tickers = rng.choice(tickers, size=self.num_stocks, replace=False)
 
     def create_portfolios(self, stock_prices):
-        rng  = np.random.default_rng()
+        rng = np.random.default_rng()
         # get stock prices on the start date for the chosen tickers
         self.initial_prices = stock_prices.loc[self.start_date]
         initial_portfolio = pd.Series(0, index=self.tickers)
@@ -188,9 +191,8 @@ class ExperimentInfo:
         leftover_cash = self.budget - initial_portfolio @ self.initial_prices
         # order the initial portfolio alphabetically
         initial_portfolio = initial_portfolio.sort_index(ascending=True)
-        initial_portfolio['cash'] = leftover_cash
+        initial_portfolio["cash"] = leftover_cash
         self.initial_portfolio = initial_portfolio
-        
 
         # create a random target portfolio with a budget using the current prices
         target = pd.Series(0, index=self.tickers)
@@ -202,13 +204,14 @@ class ExperimentInfo:
             target += purchase
         # order the target portfolio alphabetically
         target = target.sort_index(ascending=True)
-        target['cash'] = leftover_cash
+        target["cash"] = leftover_cash
         self.target_portfolio = target
 
     def generate_exp_id(self):
-        t= pd.to_datetime(str(self.start_date)) 
-        timestring = t.strftime('%Y%m%d')
+        t = pd.to_datetime(str(self.start_date))
+        timestring = t.strftime("%Y%m%d")
         self.exp_id = f"{timestring}_{self.horizon}_{self.num_stocks}_{self.tx_cost}_{int(self.budget)}"
+
 
 def generate_experiments(
     price_data_dir: str,
@@ -224,7 +227,8 @@ def generate_experiments(
     max_budget: float,
     min_budget: float,
     forecast_model: str,
-    lookback: int = 60
+    forecast_params: dict,
+    lookback: int = 60,
 ):
     """Generates a set of n experiments and saves them to a directory
     Args:
@@ -235,7 +239,7 @@ def generate_experiments(
         min_horizon (int): Minimum investment horizon for experiments (hint: set min = max for a fixed value)
         max_horizon (int): Maximum investment horizon for experiments
         max_num_stocks (int): Maximum number of stocks to use in experiments (hint: set min = max for a fixed value)
-        min_num_stocks (int): Minimum number of stocks to use in experiments 
+        min_num_stocks (int): Minimum number of stocks to use in experiments
         min_tx_cost(int): Minimum transaction cost (hint: set min = max for a fixed value)
         max_tx_cost(int): Maximum transaction cost
         max_budget(float): Maximum budget (hint: set min = max for a fixed value)
@@ -246,12 +250,12 @@ def generate_experiments(
     # Create the output directory if it doesn't exist
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    
+
     # Load the stock price data
     stock_price_df = pd.read_parquet(price_data_dir)
-    
+
     # re-index the stock price data
-    new_index = pd.date_range(start=min(stock_price_df.index), end=max(stock_price_df.index), freq='B')
+    new_index = pd.date_range(start=min(stock_price_df.index), end=max(stock_price_df.index), freq="B")
     stock_price_df = stock_price_df.reindex(new_index, fill_value=np.nan).interpolate()
 
     rng = np.random.default_rng()
@@ -265,7 +269,7 @@ def generate_experiments(
             number_of_stocks = rng.integers(min_num_stocks, max_num_stocks)
             trading_cost = rng.integers(min_tx_cost, max_tx_cost)
             budget = np.round(rng.uniform(min_budget, max_budget), 2)
-            temp = stock_price_df.loc['2018-01-01':]
+            temp = stock_price_df.loc["2018-01-01":]
             start_date = rng.choice(temp.index[:-horizon])
             # Create an experiment
             exp = ExperimentInfo(
@@ -277,14 +281,12 @@ def generate_experiments(
                 num_stocks=number_of_stocks,
                 tx_cost=trading_cost,
                 date=start_date,
-                forecast_model=forecast_model
+                forecast_model=forecast_model,
+                forecast_params=forecast_params,
             )
             # Save the experiment to a file in the output directory
-            
+
             with open(os.path.join(output_dir, f"{exp.exp_id}.pkl"), "wb") as f:
                 pickle.dump(exp, f)
         except ExperimentGenerationError as e:
             pbar.set_description(f"Experiment {i} failed with error {e}.")
-
-
-

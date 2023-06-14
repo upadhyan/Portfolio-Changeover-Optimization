@@ -12,11 +12,12 @@ import os
 class HiddenPrints:
     def __enter__(self):
         self._original_stdout = sys.stdout
-        sys.stdout = open(os.devnull, 'w')
+        sys.stdout = open(os.devnull, "w")
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         sys.stdout.close()
         sys.stdout = self._original_stdout
+
 
 class Forecast(ABC):
     def __init__(self, price_data: pd.DataFrame, lookback: int, horizon: int):
@@ -27,6 +28,7 @@ class Forecast(ABC):
     def update(self, t, horizon, **kwargs):
         pass
 
+
 class NBEATSForecast(Forecast):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -36,20 +38,20 @@ class NBEATSForecast(Forecast):
     def update(self, t, horizon):
         with HiddenPrints():
             if self.model is None:
-                self.model = NeuralForecast.load(path='./models/')
-            price_data = self.price_data[self.price_data['ds'] <= t]
+                self.model = NeuralForecast.load(path="./models/")
+            price_data = self.price_data[self.price_data["ds"] <= t]
             fcst = self.model.predict(df=price_data).reset_index()
-            fcst = fcst.rename(columns={'PatchTST': 'yhat_patchtst', 'NBEATSx': 'yhat', 'NHITS': 'yhat_nhits'})
-            current_day = self.price_data[self.price_data['ds'] == t].copy()
-            current_day = current_day.rename(columns={'y': 'yhat'})
+            fcst = fcst.rename(columns={"PatchTST": "yhat_patchtst", "NBEATSx": "yhat", "NHITS": "yhat_nhits"})
+            current_day = self.price_data[self.price_data["ds"] == t].copy()
+            current_day = current_day.rename(columns={"y": "yhat"})
             # stack current day with forecast
             fcst = pd.concat([current_day, fcst], axis=0)
             fcst = self.unmelt_data(fcst)
             # re-index this to ensure the index is continuous with respect to business days
-            fcst = fcst.reindex(pd.date_range(start=fcst.index[0], end=fcst.index[-1], freq='B'))
-            fcst = fcst.fillna(method='ffill')
+            fcst = fcst.reindex(pd.date_range(start=fcst.index[0], end=fcst.index[-1], freq="B"))
+            fcst = fcst.fillna(method="ffill")
             # get the first n+1 rows
-            fcst = fcst.iloc[:horizon+1]
+            fcst = fcst.iloc[: horizon + 1]
             # sort the columns alphabetically
             tickers = fcst.columns
             tickers.sort_values(ascending=True)
@@ -57,24 +59,25 @@ class NBEATSForecast(Forecast):
         return fcst
 
     def melt_data(self, price_data):
-        price_data.index.name = 'ds'
+        price_data.index.name = "ds"
         # Convert from wide to long format
         prices = price_data.reset_index()
-        melted_df = pd.melt(prices, id_vars=['ds'], value_vars=prices.columns[1:], var_name='unique_id', value_name='y')
-        melted_df['ds'] = pd.to_datetime(melted_df['ds'])
-        melted_df = melted_df.sort_values(['unique_id', 'ds'])
+        melted_df = pd.melt(
+            prices, id_vars=["ds"], value_vars=prices.columns[1:], var_name="unique_id", value_name="y"
+        )
+        melted_df["ds"] = pd.to_datetime(melted_df["ds"])
+        melted_df = melted_df.sort_values(["unique_id", "ds"])
         melted_df = melted_df.reset_index(drop=True)
         melted_df = melted_df.dropna()
-        return melted_df 
+        return melted_df
 
     def unmelt_data(self, price_data):
-        return price_data.pivot(index='ds', columns='unique_id', values='yhat')
+        return price_data.pivot(index="ds", columns="unique_id", values="yhat")
 
-    
 
 class ABM(Forecast):
-    def __init__(self, boost_variance=1, **kwargs):
-        self.boost_variance = boost_variance
+    def __init__(self, var_multiplier=1, **kwargs):
+        self.var_multiplier = var_multiplier
         super().__init__(**kwargs)
 
     def update(self, t, horizon, simulations=1000):
@@ -82,7 +85,7 @@ class ABM(Forecast):
         rng = np.random.default_rng()
 
         price_data = self.price_data
-        price_change = price_data.diff().dropna()
+        price_change = price_data.diff().replace([np.inf, -np.inf, np.nan], 0)
 
         idx = price_change.index.get_indexer([t], method="pad")[0]
         end_dt = idx
@@ -96,7 +99,7 @@ class ABM(Forecast):
         mu = np.mean(price_observations, axis=0) * horizon
         # cov = np.cov(price_observations, rowvar=False)
         # sigma = np.sqrt(np.diag(cov))
-        sigma = np.std(price_observations, axis=0) * np.sqrt(horizon) * self.boost_variance
+        sigma = np.std(price_observations, axis=0) * np.sqrt(horizon) * self.var_multiplier
 
         # reshape mu and sigma based on number of simulations
         # mu = np.reshape(mu, (len(tickers), simulations))
@@ -142,12 +145,12 @@ class ABM(Forecast):
 class GBM(Forecast):
     """Geometric Brownian Motion"""
 
-    def __init__(self, boost_variance=1, **kwargs):
-        self.boost_variance = boost_variance
+    def __init__(self, var_multiplier=1, **kwargs):
+        self.var_multiplier = var_multiplier
         super().__init__(**kwargs)
 
     def update(self, t, horizon, simulations=1000):
-        print(self.price_data.loc[t:t + pd.Timedelta(days=horizon)])
+        print(self.price_data.loc[t : t + pd.Timedelta(days=horizon)])
         """Update the forecasted price
 
         Args:
@@ -162,7 +165,8 @@ class GBM(Forecast):
         rng = np.random.default_rng()
 
         price_data = self.price_data
-        ret_data = self.price_data.pct_change().dropna()
+        ret_data = self.price_data.pct_change().replace([np.inf, -np.inf, np.nan], 0)
+        ret_data.to_csv("ret_data.csv")
 
         idx = ret_data.index.get_indexer([t], method="pad")[0]
         end_dt = idx
@@ -176,7 +180,7 @@ class GBM(Forecast):
         mu = np.mean(price_observations, axis=0) * horizon
         # cov = np.cov(price_observations, rowvar=False)
         # sigma = np.sqrt(np.diag(cov))
-        sigma = np.std(price_observations, axis=0) * np.sqrt(horizon)
+        sigma = np.std(price_observations, axis=0) * np.sqrt(horizon) * self.var_multiplier
 
         # reshape mu and sigma based on number of simulations
         # mu = np.reshape(mu, (len(tickers), simulations))
@@ -208,7 +212,7 @@ class GBM(Forecast):
         S = np.zeros(shape=(num_steps + 1, simulations))
         S[0] = S0 * np.ones(simulations)
 
-        #print(mu * dt, sigma * np.sqrt(dt))
+        # print(mu * dt, sigma * np.sqrt(dt))
 
         S[1:, :] = np.exp((mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * Z)
         S = S.cumprod(axis=0)
