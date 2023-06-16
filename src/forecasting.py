@@ -87,7 +87,7 @@ class ABM(Forecast):
         price_data = self.price_data
         price_change = price_data.diff().replace([np.inf, -np.inf, np.nan], 0)
 
-        idx = price_change.index.get_indexer([t], method="pad")[0]
+        idx = price_change.index.get_indexer([t], method="pad")[0]+1
         end_dt = idx
         start_dt = max(idx - self.lookback, 0)
         assert start_dt >= 0, "start_dt must be greater than 0"
@@ -104,7 +104,6 @@ class ABM(Forecast):
         # reshape mu and sigma based on number of simulations
         # mu = np.reshape(mu, (len(tickers), simulations))
         # sigma = np.reshape(sigma, (len(tickers), simulations))
-        print(np.mean(price_observations, axis=0))
 
         T = 1  # Use this for scaling mu and sigma to horizon if different unit
         dt = T / horizon
@@ -132,7 +131,6 @@ class ABM(Forecast):
         S = np.zeros(shape=(num_steps + 1, simulations))
         S[0] = S0 * np.ones(simulations)
 
-        print(mu * dt, sigma * np.sqrt(dt))
 
         S[1:, :] = S[0] + np.cumsum(
             mu * dt + sigma * np.sqrt(dt) * Z, axis=0
@@ -150,7 +148,6 @@ class GBM(Forecast):
         super().__init__(**kwargs)
 
     def update(self, t, horizon, simulations=1000):
-        print(self.price_data.loc[t : t + pd.Timedelta(days=horizon)])
         """Update the forecasted price
 
         Args:
@@ -161,47 +158,55 @@ class GBM(Forecast):
         Returns:
             DataFrame: DataFrame of forecasted prices
         """
-        t = pd.to_datetime(t)
-        rng = np.random.default_rng()
+        if horizon != 0:
+            t = pd.to_datetime(t)
+            rng = np.random.default_rng()
 
-        price_data = self.price_data
-        ret_data = self.price_data.pct_change().replace([np.inf, -np.inf, np.nan], 0)
-        ret_data.to_csv("ret_data.csv")
+            price_data = self.price_data
+            ret_data = self.price_data.pct_change().replace([np.inf, -np.inf, np.nan], 0)
+            ret_data.to_csv("ret_data.csv")
 
-        idx = ret_data.index.get_indexer([t], method="pad")[0]
-        end_dt = idx
-        start_dt = max(idx - self.lookback, 0)
-        assert start_dt >= 0, "start_dt must be greater than 0"
+            idx = ret_data.index.get_indexer([t], method="pad")[0]+1
+            end_dt = idx
+            start_dt = max(idx - self.lookback, 0)
+            assert start_dt >= 0, "start_dt must be greater than 0"
 
-        price_observations = ret_data.iloc[start_dt:end_dt]
+            price_observations = ret_data.iloc[start_dt:end_dt]
 
-        ## ABM params ##
-        # numpy objects
-        mu = np.mean(price_observations, axis=0) * horizon
-        # cov = np.cov(price_observations, rowvar=False)
-        # sigma = np.sqrt(np.diag(cov))
-        sigma = np.std(price_observations, axis=0) * np.sqrt(horizon) * self.var_multiplier
+            ## ABM params ##
+            # numpy objects
+            mu = np.mean(price_observations, axis=0) * horizon
+            # cov = np.cov(price_observations, rowvar=False)
+            # sigma = np.sqrt(np.diag(cov))
+            sigma = np.std(price_observations, axis=0) * np.sqrt(horizon) * self.var_multiplier
 
-        # reshape mu and sigma based on number of simulations
-        # mu = np.reshape(mu, (len(tickers), simulations))
-        # sigma = np.reshape(sigma, (len(tickers), simulations))
+            # reshape mu and sigma based on number of simulations
+            # mu = np.reshape(mu, (len(tickers), simulations))
+            # sigma = np.reshape(sigma, (len(tickers), simulations))
 
-        T = 1  # Use this for scaling mu and sigma to horizon if different unit
-        dt = T / horizon
+            T = 1  # Use this for scaling mu and sigma to horizon if different unit
+            dt = T / horizon
 
-        # time horizon
-        periods = ret_data.iloc[idx - 1 : idx + horizon].index
+            # time horizon
+            periods = ret_data.iloc[idx - 1 : idx + horizon].index
 
-        p_list = []
+            p_list = []
 
-        for ticker in price_data.columns:
-            S0 = price_data[ticker].iloc[idx]  # use ret_data if not using exp in simulate
-            p_list.append(self.simulate(S0, mu[ticker], sigma[ticker], dt, horizon, simulations))
+            for ticker in price_data.columns:
+                S0 = price_data[ticker].iloc[idx]  # use ret_data if not using exp in simulate
+                p_list.append(self.simulate(S0, mu[ticker], sigma[ticker], dt, horizon, simulations))
 
-        self.price_est = pd.DataFrame(p_list).T
-        self.price_est.columns = price_data.columns
-        self.price_est.index = periods
-        print(self.price_est)
+            self.price_est = pd.DataFrame(p_list).T
+            self.price_est.columns = price_data.columns
+            self.price_est.index = periods
+            # replace zeros with nan
+            self.price_est = self.price_est.replace(0, np.nan)
+            # forward fill nans
+            self.price_est = self.price_est.fillna(method="ffill")
+        else:
+
+            time_string = t.strftime("%Y-%m-%d")
+            self.price_est = self.price_data.loc[time_string].to_frame().T
         return self.price_est
 
     def simulate(self, S0, mu, sigma, dt, num_steps, simulations):
@@ -212,9 +217,8 @@ class GBM(Forecast):
         S = np.zeros(shape=(num_steps + 1, simulations))
         S[0] = S0 * np.ones(simulations)
 
-        # print(mu * dt, sigma * np.sqrt(dt))
 
         S[1:, :] = np.exp((mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * Z)
         S = S.cumprod(axis=0)
 
-        return np.mean(S, axis=1)
+        return np.mean(S, axis=1) 

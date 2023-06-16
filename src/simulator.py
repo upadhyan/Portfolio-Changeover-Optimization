@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from tqdm import trange
+from tqdm import trange, tqdm
 from src.policies import *
 from src.forecasting import *
 from src.experimental_config import *
@@ -8,7 +8,7 @@ from src.experimental_config import *
 NAIVE = "Naive"
 RIGID = "RigidDirectional"
 DIRECTIONAL_TRADING = "Directional"
-
+PRUNED_DIRECTIONAL_TRADING = "PrunedDirectional"
 
 def DIRECTIONAL_INCENTIVE_TRADING(lambda_=0.5):
     return f"DirP_{lambda_ * 100}"
@@ -16,6 +16,7 @@ def DIRECTIONAL_INCENTIVE_TRADING(lambda_=0.5):
 
 def COL_GEN(switch=True):
     return f"ColGen_{switch}"
+
 
 
 class MarketSimulator:
@@ -77,9 +78,11 @@ class MarketSimulator:
 
             self.historical_portfolios.append(portfolio) # Save portfolio at the end of the day
             self.portfolio_value.append(value) # Save portfolio value at the end of the day
-            self.trading_times.append(current_time)
-            gc.collect()
 
+            self.forecast_times.append(t2-t1)
+            self.solve_times.append(t3-t2)
+            gc.collect()
+            
             # go to the next day
             if i < self.configuration.horizon:
                 current_time = forecast.index[1]
@@ -90,7 +93,7 @@ class MarketSimulator:
         return portfolio
 
     def check_portfolio(self, portfolio):
-        return (np.round(portfolio) >= self.configuration.target_portfolio).all()
+        return (np.round(portfolio[:-1]) >= self.configuration.target_portfolio[:-1]).all()
 
     def evaluate_gain(self):
         return (self.portfolio_value[-1] - self.portfolio_value[0]) / self.portfolio_value[0]
@@ -153,6 +156,8 @@ class MultiSimRunner:
             penalty = lambda_
         elif policy == "Directional":
             policy_instance = DirectionalTradingPolicy(exp, verbose=False)
+        elif policy == "PrunedDirectional":
+            policy_instance = PrunedDirectionalTradingPolicy(exp, verbose=False)
         elif "ColGen" in policy:
             switch = policy.split("_")[1] == "True"
             policy_instance = ColumnGenerationPolicy(exp, sell_switch=switch, verbose=False)
@@ -160,21 +165,26 @@ class MultiSimRunner:
             raise ValueError("Policy not found")
         return policy_instance, penalty
 
-    def provide_run_stats(self, exp, simulator, policy, result, t1, t2, final_portfolio, penalty):
+    def provide_run_stats(self, 
+                          exp: ExperimentInfo,
+                          simulator: MarketSimulator, 
+                          policy: TradingPolicy,
+                          t1, t2, final_portfolio, penalty):
         self.simulators[(exp.exp_id, policy)] = simulator
         return {
             "experiment": exp.exp_id,
+            "forecast_model": exp.forecast_model_name,
             "policy": policy,
             "Gain": simulator.evaluate_gain(),
             "Final Value": simulator.portfolio_value[-1],
             "Initial Value": simulator.portfolio_value[0],
             "num_stocks": exp.num_stocks,
-            "pct_variance": exp.pct_variance,
             "initial_budget": exp.budget,
-            "trading_fee": exp.trading_cost,
-            "average_error": exp.average_error,
+            "trading_fee": exp.tx_cost,
             "status": simulator.status,
-            "runtime": t2 - t1,
+            "total_runtime": t2 - t1,
+            "forecast_time": np.sum(simulator.forecast_times),
+            "solve_time": np.sum(simulator.solve_times),
             "leftover_cash": final_portfolio[-1],
             "penalty": penalty,
             "total_trades": simulator.total_trades,
@@ -197,7 +207,7 @@ class MultiSimRunner:
                 pbar.set_description(f"Finished Running {policy} on {exp.exp_id}")
                 self.simulators[(exp.exp_id, policy)] = simulator
                 result_list.append(
-                    self.provide_run_stats(exp, simulator, policy, result_list, t1, t2, final_portfolio, penalty)
+                    self.provide_run_stats(exp, simulator, policy, t1, t2, final_portfolio, penalty)
                 )
                 gc.collect()
                 if save_file is not None:
@@ -211,21 +221,4 @@ class MultiSimRunner:
         self.run(save_file=save_file)
         return self.results
 
-    def run_specific(self, experiment_list):
-        result_list = []
-        pbar = tqdm(experiment_list)
-        for exp in pbar:
-            for policy in self.policies:
-                policy_instance, penalty = self.get_policy(policy, exp)
-                pbar.set_description(f"Running {policy} on {exp.exp_id}")
-                t1 = time()
-                simulator = MarketSimulator(exp, policy_instance, verbose=False)
-                final_portfolio = simulator.run()
-                t2 = time()
-                pbar.set_description(f"Finished Running {policy} on {exp.exp_id}")
-                self.simulators[(exp.exp_id, policy)] = simulator
-                result_list.append(
-                    self.provide_run_stats(exp, simulator, policy, result_list, t1, t2, final_portfolio, penalty)
-                )
-                gc.collect()
-        return pd.DataFrame(result_list)
+

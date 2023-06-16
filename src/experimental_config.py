@@ -144,14 +144,17 @@ class ExperimentInfo:
         self.initial_portfolio = None
         self.target_portfolio = None
         self.initial_prices = None
-
+        
         # Configure experiment
         self.choose_tickers(stock_prices)
         # order self.tickers alphabetically
         self.tickers.sort()
         stock_prices = stock_prices[self.tickers]
+        # re-index the stock price data
+        new_index = pd.date_range(start=min(stock_prices.index), end=max(stock_prices.index), freq="B")
+        stock_prices = stock_prices.reindex(new_index, fill_value=np.nan).interpolate()
         self.create_portfolios(stock_prices)
-
+        self.forecast_model_name = forecast_model
         self.forecast_model = self.MODEL_DICT[forecast_model](
             price_data=stock_prices[self.tickers],
             lookback=self.lookback,
@@ -269,7 +272,7 @@ def generate_experiments(
             number_of_stocks = rng.integers(min_num_stocks, max_num_stocks)
             trading_cost = rng.integers(min_tx_cost, max_tx_cost)
             budget = np.round(rng.uniform(min_budget, max_budget), 2)
-            temp = stock_price_df.loc["2018-01-01":]
+            temp = stock_price_df.loc["2018-03-01":]
             start_date = rng.choice(temp.index[:-horizon])
             # Create an experiment
             exp = ExperimentInfo(
