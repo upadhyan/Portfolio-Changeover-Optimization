@@ -8,7 +8,7 @@ from src.experimental_config import *
 NAIVE = "Naive"
 RIGID = "RigidDirectional"
 DIRECTIONAL_TRADING = "Directional"
-PRUNED_DIRECTIONAL_TRADING = "PrunedDirectional"
+SEEDED_DIRECTIONAL_TRADING = "SeededDirectional"
 
 def DIRECTIONAL_INCENTIVE_TRADING(lambda_=0.5):
     return f"DirP_{lambda_ * 100}"
@@ -156,8 +156,8 @@ class MultiSimRunner:
             penalty = lambda_
         elif policy == "Directional":
             policy_instance = DirectionalTradingPolicy(exp, verbose=False)
-        elif policy == "PrunedDirectional":
-            policy_instance = PrunedDirectionalTradingPolicy(exp, verbose=False)
+        elif policy == "SeededDirectional":
+            policy_instance = SeededDirectionalTradingPolicy(exp, verbose=False)
         elif "ColGen" in policy:
             switch = policy.split("_")[1] == "True"
             policy_instance = ColumnGenerationPolicy(exp, sell_switch=switch, verbose=False)
@@ -173,6 +173,7 @@ class MultiSimRunner:
         self.simulators[(exp.exp_id, policy)] = simulator
         return {
             "experiment": exp.exp_id,
+            "horizon": exp.horizon,
             "forecast_model": exp.forecast_model_name,
             "policy": policy,
             "Gain": simulator.evaluate_gain(),
@@ -198,21 +199,24 @@ class MultiSimRunner:
             with open(f"{self.experiments_directory}/{experiment}", "rb") as f:
                 exp = pickle.load(f)
             for policy in self.policies:
-                policy_instance, penalty = self.get_policy(policy, exp)
-                pbar.set_description(f"Running {policy} on {exp.exp_id}")
-                t1 = time()
-                simulator = MarketSimulator(exp, policy_instance, verbose=False)
-                final_portfolio = simulator.run()
-                t2 = time()
-                pbar.set_description(f"Finished Running {policy} on {exp.exp_id}")
-                self.simulators[(exp.exp_id, policy)] = simulator
-                result_list.append(
-                    self.provide_run_stats(exp, simulator, policy, t1, t2, final_portfolio, penalty)
-                )
-                gc.collect()
-                if save_file is not None:
-                    self.results = pd.DataFrame(result_list)
-                    self.results.to_csv(save_file)
+                try:
+                    policy_instance, penalty = self.get_policy(policy, exp)
+                    pbar.set_description(f"Running {policy} on {exp.exp_id}")
+                    t1 = time()
+                    simulator = MarketSimulator(exp, policy_instance, verbose=False)
+                    final_portfolio = simulator.run()
+                    t2 = time()
+                    pbar.set_description(f"Finished Running {policy} on {exp.exp_id}")
+                    self.simulators[(exp.exp_id, policy)] = simulator
+                    result_list.append(
+                        self.provide_run_stats(exp, simulator, policy, t1, t2, final_portfolio, penalty)
+                    )
+                    gc.collect()
+                    if save_file is not None:
+                        self.results = pd.DataFrame(result_list)
+                        self.results.to_csv(save_file)
+                except:
+                    print(f"Failed to run {policy} on {exp.exp_id}")
             del exp
             gc.collect()
         self.results = pd.DataFrame(result_list)

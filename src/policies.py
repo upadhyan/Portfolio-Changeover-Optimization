@@ -52,6 +52,16 @@ class DirectionalTradingPolicy(TradingPolicy):
         p = portfolio.values[:-1]  # portfolio of number of positions
         current_cash = portfolio.values[-1]  # cash amount
         value = price_data.loc[t] @ p + current_cash
+        if not value > 0.0:
+            print("----------------- Price Data -----------------")
+            print(price_data.loc[t])
+            print("----------------- Portfolio -----------------")
+            print(portfolio)
+            print("----------------- Current Cash -----------------")
+            print(current_cash)
+            print("----------------- Value -----------------")
+            print(value)
+
         assert value > 0.0
         self.vprint(f"Current Portfolio Value at {t}: {value}")
         prob_arr = []
@@ -177,7 +187,7 @@ class DirectionalTradingPolicy(TradingPolicy):
         )
 
 
-class PrunedDirectionalTradingPolicy(TradingPolicy):
+class SeededDirectionalTradingPolicy(TradingPolicy):
     """This policy restrics trades in the direction of the final portfolio. It uses a constraint to enforce this."""
 
     def __init__(self, experiment: ExperimentInfo, verbose=True, **kwargs):
@@ -195,63 +205,32 @@ class PrunedDirectionalTradingPolicy(TradingPolicy):
         p = portfolio.values[:-1]
         current_cash = portfolio.values[-1]  # cash amount
         value = price_data.loc[t] @ p + current_cash
-        
+
         assert value > 0.0
         self.vprint(f"Current Portfolio Value at {t}: {value}")
+
 
         ## Direction Definition
         initial_portfolio = portfolio.copy()[:-1]
         final = self.exp.target_portfolio.copy()[:-1]
 
+        # final portfolio value
+        final_value = price_data.loc[t] @ final 
+        
         # difference between final and initial portfolio
         difference = final - initial_portfolio
 
-        buy_constraint = difference > 0
-        sell_constraint = difference < 0
-        F = self.F
+        buy_constraint = (difference > 0) * 1
+        sell_constraint = (difference < 0) * 1
 
-        
-        # select the stocks that we can buy and sell 
-        possible_sells  = difference * sell_constraint * -1
-        possible_buys  = difference * buy_constraint
-
-        cash_generated = price_data.copy()
-        cash_used = price_data.copy()
-        for i, col in enumerate(cash_generated.columns):
-
-            max_price = price_data[col].max() # non_zero_indices = np.nonzero(s.values)[0]
-            cash_generated[col] = cash_generated[col].apply(lambda x: x if x == max_price else 0) * possible_sells[col]
-            non_zero_indexes = np.nonzero(cash_generated[col].values)[0]
-            if len(non_zero_indexes) > 0:
-                first_non_zero_index = non_zero_indexes[0]
-                if first_non_zero_index != len(cash_generated) - 1 and len(non_zero_indexes) > 1:
-                    cash_generated.iloc[first_non_zero_index+1:, i] = 0
             
-            min_price = price_data[col].min()
-            cash_used[col] = cash_used[col].apply(lambda x: x if x == min_price else 0) * possible_buys[col]
-            non_zero_indexes = np.nonzero(cash_used[col].values)[0]
-            if len(non_zero_indexes) > 0:
-                last_non_zero_index = non_zero_indexes[-1]
-                if last_non_zero_index !=0 and len(non_zero_indexes) > 1:
-                    cash_used.iloc[:last_non_zero_index, i] = 0
 
-        total_cash_generated = cash_generated.sum(axis=1).cumsum()
-        total_cash_used = cash_used.sum(axis=1).cumsum()
-        # check if total cash generated is greater than total cash for all time steps
-        
-        if (total_cash_generated >= total_cash_used).all() and (total_cash_generated + total_cash_used).iloc[0] == 0:
-            return (
-                pd.Series(index=portfolio.index, data=0, name=t),
-                price_data.loc[t] @ portfolio[:-1] + portfolio[-1],
-            )
-        elif (total_cash_generated >= total_cash_used).all():
-            w_sell = (cash_generated > 0) * 1
-            w_buy = (cash_used > 0) * 1
-            return self.pruned_problem(portfolio, t, price_data, w_sell, w_buy)
-        else:
-            return self.main_problem(portfolio, t, price_data)
+        F = self.F
+        # select the stocks that we can buy and sell 
+        possible_buys = difference * buy_constraint
+        possible_sells  = difference * sell_constraint * -1
+        M_sell = possible_sells.values
 
-    def main_problem(self, portfolio, t, price_data):
         env = gp.Env(empty=True)
         env.setParam("OutputFlag", False)
         env.setParam("TimeLimit", 300)
@@ -259,71 +238,58 @@ class PrunedDirectionalTradingPolicy(TradingPolicy):
         #######################
         p = portfolio.values[:-1]  # portfolio of number of positions
         
-        current_cash = portfolio.values[-1]  # cash amount
-        value = price_data.loc[t] @ p + current_cash
-        assert value > 0.0
-        self.vprint(f"Current Portfolio Value at {t}: {value}")
         prob_arr = []
         z_arr = []
         cash_arr = []
         p_arr = []
-
-        ## Direction Definition
-        initial_portfolio = portfolio.copy()[:-1]
-        final = self.exp.target_portfolio.copy()[:-1]
-
-        # difference between final and initial portfolio
-        difference = final - initial_portfolio
-
-        buy_constraint = (difference > 0) * 1
-        sell_constraint = (difference < 0) * 1
-        F = self.F
         
-        returns = price_data.pct_change().fillna(0) + 1
-        
-        port_value_bounds = value * returns.max(axis=1).cumprod()
         p_next = None
         m = gp.Model(env=env)
         time_steps = price_data.index
         n_timesteps = len(time_steps)
         cash = current_cash
         ### Generate all possible trade matrices -> store it in a matrix list of size len(trading_info)
-        for time_step in time_steps:
+        for i, time_step in enumerate(time_steps):
             prices = price_data.loc[time_step].values
+
 
             z_buy = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
             z_sell = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
             y_sell = m.addMVar(p.shape, vtype=GRB.BINARY)
             y_buy = m.addMVar(p.shape, vtype=GRB.BINARY)
-            ## lambda_it_sell = admvar(L(## of choice), vtype = binary )
-            ## lambda_it_buy = admvar(L(## of choice), vtype = binary )
-            ## m.add constr (sum lambdas  == 1)
 
-            ## Directional Constraints
-            bound_at_time = port_value_bounds.loc[time_step]
+            if final_value < value:
+                if i == 0:
+                    m.params.StartNumber = 1
+                    z_buy.Start = possible_buys
+                    z_sell.Start = possible_sells
+                    y_sell.Start = sell_constraint
+                    y_buy.Start = buy_constraint
+                else:
+                    z_buy.Start = np.zeros(p.shape)
+                    z_sell.Start = np.zeros(p.shape)
+                    y_sell.Start = np.zeros(p.shape)
+                    y_buy.Start = np.zeros(p.shape)
 
-            M = np.ceil(bound_at_time / prices)
-            # m.addConstr(z_buy <= buy_constraint.values * M)
-            # m.addConstr(z_sell <= (1 - buy_constraint.values) * M)
+
             m.addConstr(y_buy <= buy_constraint.values)
             m.addConstr(y_sell <= sell_constraint.values)
 
-            # pull relevant vectors
-            # vectors_buy = [buy_matrix[:,timestep] for matrix in buy_matrix_list]
-            # vectors_buy = [sell_matrix[:,timestep] for matrix in sell_matrix_list]
 
             # Next Portfolio
             p_next = p + z_buy - z_sell
-            # y_sell = lambda_it_sell^T @ vectors_sell
-            # y_buy = lambda_it_buy^T @ vectors_buy
+
             cash_next = prices @ (z_sell - z_buy) - F @ y_sell - F @ y_buy + cash
 
             ## Trading fees
             ### if we sell a stock, we pay a trading price
-            m.addConstr(M * y_sell >= z_sell)
-
+            m.addConstr(M_sell * y_sell >= z_sell)
+            
             ## If we buy a stock, we pay a trading fee
-            m.addConstr(M * y_buy >= z_buy)
+            best_sell_prices = price_data.loc[:time_step].max(axis=0) 
+            max_cash = M_sell @ best_sell_prices + current_cash
+            M_buy = np.floor(max_cash / prices)
+            m.addConstr(M_buy * y_buy >= z_buy)
 
             ## No borrowing
             m.addConstr(cash_next >= 0)
@@ -339,9 +305,9 @@ class PrunedDirectionalTradingPolicy(TradingPolicy):
             cash_arr.append(cash_next)
             p_arr.append(p_next)
 
-        final_p = self.exp.target_portfolio.values[:-1]
+        
         # Terminal constraint.
-        m.addConstr(p_next >= final_p, name="terminal")
+        m.addConstr(p_next >= final.values, name="terminal")
 
         prob_arr.append(prices @ p_next + cash_next)
 
@@ -384,134 +350,10 @@ class PrunedDirectionalTradingPolicy(TradingPolicy):
             ),
             value,
         )
-    def pruned_problem(self, portfolio, t, price_data, w_sell, w_buy):
-        env = gp.Env(empty=True)
-        env.setParam("OutputFlag", False)
-        env.setParam("TimeLimit", 300)
-        env.start()
-        #######################
-        p = portfolio.values[:-1]  # portfolio of number of positions
         
-        current_cash = portfolio.values[-1]  # cash amount
-        value = price_data.loc[t] @ p + current_cash
-        assert value > 0.0
-        self.vprint(f"Current Portfolio Value at {t}: {value}")
-        prob_arr = []
-        z_arr = []
-        cash_arr = []
-        p_arr = []
-
-        ## Direction Definition
-        initial_portfolio = portfolio.copy()[:-1]
-        final = self.exp.target_portfolio.copy()[:-1]
-
-        # difference between final and initial portfolio
-        difference = final - initial_portfolio
-
-        buy_constraint = (difference > 0) * 1
-        sell_constraint = (difference < 0) * 1
-        F = self.F
         
-        returns = price_data.pct_change().fillna(0) + 1
-        
-        port_value_bounds = value * returns.max(axis=1).cumprod()
-        p_next = None
-        m = gp.Model(env=env)
-        time_steps = price_data.index
-        n_timesteps = len(time_steps)
-        cash = current_cash
-        ### Generate all possible trade matrices -> store it in a matrix list of size len(trading_info)
-        for time_step in time_steps:
-            prices = price_data.loc[time_step].values
 
-            z_buy = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
-            z_sell = m.addMVar(p.shape, vtype=GRB.INTEGER, lb=0)
-            y_sell = w_sell.loc[time_step].values
-            y_buy = w_buy.loc[time_step].values
-
-            ## Directional Constraints
-            bound_at_time = port_value_bounds.loc[time_step]
-
-            M = np.ceil(bound_at_time / prices)
-
-            # pull relevant vectors
-            # vectors_buy = [buy_matrix[:,timestep] for matrix in buy_matrix_list]
-            # vectors_buy = [sell_matrix[:,timestep] for matrix in sell_matrix_list]
-
-            # Next Portfolio
-            p_next = p + z_buy - z_sell
-            # y_sell = lambda_it_sell^T @ vectors_sell
-            # y_buy = lambda_it_buy^T @ vectors_buy
-            cash_next = prices @ (z_sell - z_buy) - F @ y_sell - F @ y_buy + cash
-
-            ## Trading fees
-            ### if we sell a stock, we pay a trading price
-            m.addConstr(M * y_sell >= z_sell)
-
-            ## If we buy a stock, we pay a trading fee
-            m.addConstr(M * y_buy >= z_buy)
-
-            ## No borrowing
-            m.addConstr(cash_next >= 0)
-
-            ## No shorting
-            m.addConstr(p_next >= 0)
-
-            prob_arr.append(-F @ y_sell - F @ y_buy)
-            cash = cash_next
-            p = p_next
-
-            z_arr.append(z_buy - z_sell)
-            cash_arr.append(cash_next)
-            p_arr.append(p_next)
-
-        final_p = self.exp.target_portfolio.values[:-1]
-        # Terminal constraint.
-        m.addConstr(p_next >= final_p, name="terminal")
-
-        prob_arr.append(prices @ p_next + cash_next)
-
-        # Combine all time instances
-        obj = sum(prob_arr)
-
-        m.setObjective(obj, GRB.MAXIMIZE)
-        m.update()
-        # get model constraints
-        self.vprint(
-            f"\t Optimizing with {n_timesteps} time steps, "
-            f"{len(m.getConstrs())} constraints, and {len(m.getVars())} variables..."
-        )
-        t1 = time()
-        m.optimize()
-        t2 = time()
-        self.vprint(
-            f"\t Optimized. Time taken: {t2 - t1}",
-        )
-        # self.p_vals = [p.getValue() for p in p_arr]
-        # self.cash_vals = [_cash.getValue() for _cash in cash_arr]
-        # self.z_vals = [z.getValue() for z in z_arr]
-        try:
-            self.p_vals = [p.getValue() for p in p_arr]
-            self.cash_vals = [_cash.getValue() for _cash in cash_arr]
-            self.z_vals = [z.getValue() for z in z_arr]
-        except Exception as e:
-            self.vprint(e)
-            return (
-                pd.Series(index=portfolio.index, data=0, name=t),
-                price_data.loc[t] @ portfolio[:-1] + portfolio[-1],
-            )
-        assert (np.round(self.p_vals[0]) >= 0).all()
-        del m
-        del env
-        gc.collect()
-        return (
-            pd.Series(
-                index=portfolio.index, data=(np.append(self.z_vals[0], self.cash_vals[0] - current_cash)), name=t
-            ),
-            value,
-        )
-
-
+    
 
 class ColumnGenerationPolicy(TradingPolicy):
     """WIP: This policy uses column generation to solve the problem. It enumerates feasible directional trades
@@ -940,7 +782,7 @@ class NaivePolicy(TradingPolicy):
             self.vprint(e)
             return (
                 pd.Series(index=portfolio.index, data=0, name=t),
-                self.known_dict[t] @ portfolio[:-1] + portfolio[-1],
+                price_data.loc[t] @ portfolio[:-1] + portfolio[-1],
             )
         assert (np.round(self.p_next) >= 0).all()
         del m

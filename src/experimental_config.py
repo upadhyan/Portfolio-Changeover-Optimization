@@ -152,7 +152,7 @@ class ExperimentInfo:
         stock_prices = stock_prices[self.tickers]
         # re-index the stock price data
         new_index = pd.date_range(start=min(stock_prices.index), end=max(stock_prices.index), freq="B")
-        stock_prices = stock_prices.reindex(new_index, fill_value=np.nan).interpolate()
+        stock_prices = stock_prices.reindex(new_index, fill_value=np.nan).fillna(method="ffill")
         self.create_portfolios(stock_prices)
         self.forecast_model_name = forecast_model
         self.forecast_model = self.MODEL_DICT[forecast_model](
@@ -167,8 +167,11 @@ class ExperimentInfo:
     def choose_tickers(self, stock_prices):
         # subset the stock prices to a year before the start date and 90 days after the start date
         subset_prices = stock_prices.loc[
-            self.start_date - pd.Timedelta(days=365) : self.start_date + pd.Timedelta(days=90)
+            self.start_date - pd.Timedelta(days=365) : self.start_date + pd.Timedelta(days=180)
         ]
+        # re-index the stock price data
+        new_index = pd.date_range(start=min(subset_prices.index), end=max(subset_prices.index), freq="B")
+        subset_prices = subset_prices.reindex(new_index, fill_value=np.nan).interpolate()
         # replace 0 values with nan
         subset_prices = subset_prices.replace(0, np.nan)
         # drop columns with nan or zero values
@@ -272,7 +275,7 @@ def generate_experiments(
             number_of_stocks = rng.integers(min_num_stocks, max_num_stocks)
             trading_cost = rng.integers(min_tx_cost, max_tx_cost)
             budget = np.round(rng.uniform(min_budget, max_budget), 2)
-            temp = stock_price_df.loc["2018-03-01":]
+            temp = stock_price_df.loc["2018-03-01":'2021-12-31']
             start_date = rng.choice(temp.index[:-horizon])
             # Create an experiment
             exp = ExperimentInfo(

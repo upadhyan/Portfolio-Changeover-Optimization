@@ -164,7 +164,6 @@ class GBM(Forecast):
 
             price_data = self.price_data
             ret_data = self.price_data.pct_change().replace([np.inf, -np.inf, np.nan], 0)
-            ret_data.to_csv("ret_data.csv")
 
             idx = ret_data.index.get_indexer([t], method="pad")[0]+1
             end_dt = idx
@@ -204,9 +203,13 @@ class GBM(Forecast):
             # forward fill nans
             self.price_est = self.price_est.fillna(method="ffill")
         else:
-
             time_string = t.strftime("%Y-%m-%d")
             self.price_est = self.price_data.loc[time_string].to_frame().T
+            if self.price_est.isnull().values.any():
+                print(self.price_data.loc[time_string])
+                print('Price Estimate')
+                print(self.price_est)
+                raise ValueError("Price data is missing for the given date")
         return self.price_est
 
     def simulate(self, S0, mu, sigma, dt, num_steps, simulations):
